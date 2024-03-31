@@ -1,0 +1,14 @@
+[package]
+name = "cskburn"
+version = "2.0.0"
+authors = ["xychen <xychen@listenai.com>"]
+edition = "2021"
+description = "A programming utility for LISTENAI CSK series chips."
+repository = "https://github.com/LISTENAI/cskburn-rs"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+clap = { version = "4.5.4", features = ["derive"] }
+dialoguer = "0.11.0"
+serialport = "4.3.0"
