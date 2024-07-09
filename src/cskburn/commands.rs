@@ -1,3 +1,4 @@
+use super::utils;
 use binrw::{binrw, binwrite, BinWrite};
 use std::{
     fmt::Debug,
@@ -31,16 +32,57 @@ pub enum Command {
 }
 
 #[binwrite]
+#[derive(Debug)]
+#[allow(dead_code)]
+pub enum MemoryAction {
+    #[bw(magic = 0x00u32)]
+    Boot(#[bw(calc = 0)] u32),
+    #[bw(magic = 0x01u32)]
+    JumpTo(u32),
+    #[bw(magic = 0x02u32)]
+    Run(#[bw(calc = 0)] u32),
+}
+
+#[binwrite]
 #[bw(little)]
 #[derive(Debug)]
 pub enum Request {
+    MemoryBegin {
+        size: u32,
+        blocks: u32,
+        block_size: u32,
+        offset: u32,
+    },
+    MemoryEnd {
+        action: MemoryAction,
+    },
+    MemoryData {
+        #[bw(calc = data.len() as u32)]
+        size: u32,
+        seq: u32,
+        #[bw(calc = 0)]
+        rev1: u32,
+        #[bw(calc = 0)]
+        rev2: u32,
+        data: Vec<u8>,
+    },
     Sync(#[bw(calc = SYNC_STUB)] [u8; 36]),
 }
 
 impl Request {
     pub fn command(&self) -> Command {
         match self {
+            Request::MemoryBegin { .. } => Command::MemoryBegin,
+            Request::MemoryEnd { .. } => Command::MemoryEnd,
+            Request::MemoryData { .. } => Command::MemoryData,
             Request::Sync() => Command::Sync,
+        }
+    }
+
+    pub fn checksum(&self) -> u32 {
+        match self {
+            Request::MemoryData { data, .. } => utils::checksum(data),
+            _ => 0,
         }
     }
 }

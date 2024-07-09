@@ -1,26 +1,53 @@
 mod commands;
 mod error;
+mod family;
 mod requests;
 mod slip;
+mod utils;
 
-use commands::Request;
-use log::trace;
+use commands::{MemoryAction, Request};
+use log::{debug, trace};
 use serialport::SerialPort;
 use slip_codec::{SlipDecoder, SlipEncoder};
-use std::{io, thread::sleep, time::Duration};
+use std::{
+    fs::File,
+    io::{self, Cursor, Read},
+    thread::sleep,
+    time::Duration,
+};
 
 pub use error::Error;
+pub use family::Family;
 
 type Result<T> = std::result::Result<T, Error>;
+
+const MEMORY_BLOCK_SIZE: usize = 2048;
+
+pub trait Source: Read {
+    fn size(&self) -> io::Result<usize>;
+}
+
+impl Source for File {
+    fn size(&self) -> io::Result<usize> {
+        self.metadata().map(|m| m.len() as usize)
+    }
+}
+
+impl<T: AsRef<[u8]>> Source for Cursor<T> {
+    fn size(&self) -> io::Result<usize> {
+        Ok(self.get_ref().as_ref().len())
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CSKBurnBuilder {
     path: String,
     baud: u32,
+    chip: Family,
 }
 
-pub fn new(path: String, baud: u32) -> CSKBurnBuilder {
-    CSKBurnBuilder { path, baud }
+pub fn new(path: String, baud: u32, chip: Family) -> CSKBurnBuilder {
+    CSKBurnBuilder { path, baud, chip }
 }
 
 impl CSKBurnBuilder {
@@ -32,6 +59,7 @@ impl CSKBurnBuilder {
         Ok(CSKBurn {
             port,
             baud: self.baud,
+            chip: self.chip,
             slip_enc: SlipEncoder::new(true),
             slip_dec: SlipDecoder::new(),
         })
@@ -41,6 +69,7 @@ impl CSKBurnBuilder {
 pub struct CSKBurn {
     port: Box<dyn SerialPort>,
     baud: u32,
+    chip: Family,
     slip_enc: SlipEncoder,
     slip_dec: SlipDecoder,
 }
@@ -69,5 +98,54 @@ impl CSKBurn {
         }
 
         Err(Error::io(io::ErrorKind::TimedOut))
+    }
+
+    pub fn memory_write(
+        &mut self,
+        offset: u32,
+        source: &mut dyn Source,
+        action: Option<MemoryAction>,
+    ) -> Result<usize> {
+        let size: usize = source.size()?;
+        let blocks = utils::blocks(size, MEMORY_BLOCK_SIZE);
+        debug!(
+            "begin memory write, total size: {}, blocks: {}",
+            size, blocks
+        );
+
+        self.command(
+            Request::MemoryBegin {
+                size: size as u32,
+                blocks: blocks as u32,
+                block_size: MEMORY_BLOCK_SIZE as u32,
+                offset,
+            },
+            None,
+        )?;
+
+        let mut buf = vec![0; MEMORY_BLOCK_SIZE];
+        for seq in 0..blocks as u32 {
+            let read = source.read(&mut buf)?;
+            if read == 0 {
+                break;
+            }
+
+            self.command(
+                Request::MemoryData {
+                    seq,
+                    data: buf[..read].to_vec(),
+                },
+                None,
+            )?;
+        }
+
+        self.command(
+            Request::MemoryEnd {
+                action: action.unwrap_or(MemoryAction::Boot()),
+            },
+            None,
+        )?;
+
+        Ok(size)
     }
 }

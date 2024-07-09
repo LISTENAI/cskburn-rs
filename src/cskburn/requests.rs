@@ -61,7 +61,7 @@ impl super::CSKBurn {
 
         let req: RequestEnvelope = RequestEnvelope {
             command: request.command(),
-            checksum: 0,
+            checksum: request.checksum(),
             data: request.try_into()?,
         };
 

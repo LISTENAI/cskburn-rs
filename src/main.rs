@@ -2,9 +2,12 @@ mod cskburn;
 mod types;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use cskburn::{Family, Source};
 use dialoguer::Select;
 use log::trace;
 use serialport::available_ports;
+use std::fs::File;
+use std::io::Cursor;
 use std::time::Duration;
 use types::{FileSpec, RegionSpec};
 
@@ -33,6 +36,9 @@ struct Cli {
     /// Chip family [possible values: 3, 4, 6]
     #[arg(short = 'C', long, default_value = "6")]
     chip: u8,
+
+    /// Path to burner image to use, omit to use built-in
+    burner: Option<String>,
 
     /// Target to program
     #[arg(short, long, value_enum, default_value = "flash")]
@@ -125,7 +131,15 @@ fn main() {
         cli.port.unwrap()
     };
 
-    let mut cskburn = cskburn::new(path, cli.baud)
+    let chip: Family = cli.chip.try_into().unwrap();
+
+    let mut burner: Box<dyn Source> = if let Some(path) = cli.burner {
+        Box::new(File::open(path).expect("Failed to read burner image"))
+    } else {
+        Box::new(Cursor::new(chip.burner()))
+    };
+
+    let mut cskburn = cskburn::new(path, cli.baud, chip)
         .open()
         .expect("Failed to open device");
 
@@ -149,6 +163,18 @@ fn main() {
     }
 
     println!("Device detected");
+
+    cskburn
+        .memory_write(0, &mut *burner, None)
+        .expect("Failed to write burner image");
+
+    println!("Burner written");
+
+    cskburn
+        .probe(Some(PROBE_SYNC_ATTEMPTS))
+        .expect("Failed entering burner mode");
+
+    println!("Burner entered");
 }
 
 fn choose_port() -> Result<String, &'static str> {
