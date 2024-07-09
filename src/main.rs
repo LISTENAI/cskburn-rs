@@ -1,9 +1,23 @@
+mod cskburn;
 mod types;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use dialoguer::Select;
+use log::trace;
 use serialport::available_ports;
+use std::time::Duration;
 use types::{FileSpec, RegionSpec};
+
+/// Number of times to attempt to reset the device when probing before giving up.
+/// In each attempt, a series of SYNC commands will be issued.
+const PROBE_RESET_ATTEMPTS: usize = 2;
+
+/// Number of times to attempt to issue a SYNC command when probing. Each attempt
+/// takes about 500 ms.
+const PROBE_SYNC_ATTEMPTS: usize = 3;
+
+/// Interval between the reset pin being asserted and de-asserted.
+const RESET_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Parser, Debug)]
 #[command(version, author, about, long_about)]
@@ -94,19 +108,47 @@ struct VerifyArgs {
 }
 
 fn main() {
-    let mut cli = Cli::parse();
+    env_logger::init();
 
-    if cli.port.is_none() {
-        cli.port = match choose_port() {
-            Ok(p) => Some(p),
+    let cli = Cli::parse();
+    trace!("{:?}", cli);
+
+    let path = if cli.port.is_none() {
+        match choose_port() {
+            Ok(p) => p,
             Err(e) => {
                 eprintln!("ERROR: {}", e);
                 std::process::exit(1);
             }
-        };
+        }
+    } else {
+        cli.port.unwrap()
+    };
+
+    let mut cskburn = cskburn::new(path, cli.baud)
+        .open()
+        .expect("Failed to open device");
+
+    if !cskburn.probe(None).is_ok() {
+        let mut success = false;
+
+        for _ in 0..PROBE_RESET_ATTEMPTS {
+            cskburn
+                .reset(true, Some(RESET_INTERVAL))
+                .expect("Failed to reset device");
+
+            if cskburn.probe(Some(PROBE_SYNC_ATTEMPTS)).is_ok() {
+                success = true;
+                break;
+            }
+        }
+
+        if !success {
+            panic!("Failed to detect device after multiple attempts");
+        }
     }
 
-    println!("{:#?}", cli);
+    println!("Device detected");
 }
 
 fn choose_port() -> Result<String, &'static str> {
