@@ -52,6 +52,27 @@ impl TryFrom<ResponseEnvelope> for Vec<u8> {
     }
 }
 
+impl ResponseEnvelope {
+    pub fn to_reader(&self) -> Cursor<Vec<u8>> {
+        Cursor::new(self.data.to_owned())
+    }
+}
+
+impl<const N: usize> TryFrom<ResponseEnvelope> for [u8; N] {
+    type Error = io::Error;
+
+    fn try_from(res: ResponseEnvelope) -> io::Result<Self> {
+        if res.data.len() != N {
+            return Err(io::ErrorKind::InvalidData.into());
+        }
+
+        let mut data = [0; N];
+        data.copy_from_slice(&res.data);
+
+        Ok(data)
+    }
+}
+
 impl super::CSKBurn {
     pub fn command<T>(&mut self, request: Request, timeout: Option<Duration>) -> Result<T>
     where

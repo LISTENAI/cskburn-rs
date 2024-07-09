@@ -1,7 +1,7 @@
-use super::utils;
-use binrw::{binrw, binwrite, BinWrite};
+use super::{requests::ResponseEnvelope, utils};
+use binrw::{binread, binrw, binwrite, BinRead, BinWrite};
 use std::{
-    fmt::Debug,
+    fmt::{self, Debug},
     io::{self, Cursor},
 };
 
@@ -43,6 +43,60 @@ pub enum MemoryAction {
     Run(#[bw(calc = 0)] u32),
 }
 
+#[binread]
+#[br(little)]
+#[derive(Debug)]
+pub struct FlashInfo {
+    #[br(assert(id != [0x00, 0x00, 0x00] && id != [0xFF, 0xFF, 0xFF]))]
+    pub id: [u8; 3],
+}
+
+impl FlashInfo {
+    pub fn size(&self) -> usize {
+        2 << (self.id[2] - 1)
+    }
+}
+
+impl fmt::Display for FlashInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for byte in &self.id {
+            write!(f, "{:02X}", byte)?;
+        }
+        Ok(())
+    }
+}
+
+impl TryFrom<ResponseEnvelope> for FlashInfo {
+    type Error = io::Error;
+
+    fn try_from(res: ResponseEnvelope) -> io::Result<Self> {
+        Self::read(&mut Cursor::new(res.value.to_le_bytes()))
+            .map_err(|_| io::ErrorKind::InvalidData.into())
+    }
+}
+
+#[binread]
+#[br(little)]
+#[derive(Debug)]
+pub struct ChipId([u8; 8]);
+
+impl fmt::Display for ChipId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for byte in &self.0 {
+            write!(f, "{:02X}", byte)?;
+        }
+        Ok(())
+    }
+}
+
+impl TryFrom<ResponseEnvelope> for ChipId {
+    type Error = io::Error;
+
+    fn try_from(res: ResponseEnvelope) -> io::Result<Self> {
+        Self::read(&mut res.to_reader()).map_err(|_| io::ErrorKind::InvalidData.into())
+    }
+}
+
 #[binwrite]
 #[bw(little)]
 #[derive(Debug)]
@@ -67,6 +121,8 @@ pub enum Request {
         data: Vec<u8>,
     },
     Sync(#[bw(calc = SYNC_STUB)] [u8; 36]),
+    ReadFlashId,
+    ReadChipId,
 }
 
 impl Request {
@@ -76,6 +132,8 @@ impl Request {
             Request::MemoryEnd { .. } => Command::MemoryEnd,
             Request::MemoryData { .. } => Command::MemoryData,
             Request::Sync() => Command::Sync,
+            Request::ReadFlashId => Command::ReadFlashId,
+            Request::ReadChipId => Command::ReadChipId,
         }
     }
 

@@ -175,6 +175,12 @@ fn main() {
         .expect("Failed entering burner mode");
 
     println!("Burner entered");
+
+    let chip_id = cskburn.chip_id().expect("Failed to read chip ID");
+    println!("Chip ID: {}", chip_id);
+
+    let flash_id = cskburn.flash_info().expect("Failed to read flash ID");
+    println!("Flash ID: {}", flash_id);
 }
 
 fn choose_port() -> Result<String, &'static str> {

@@ -5,7 +5,7 @@ mod requests;
 mod slip;
 mod utils;
 
-use commands::{MemoryAction, Request};
+use commands::{ChipId, FlashInfo, MemoryAction, Request};
 use log::{debug, trace};
 use serialport::SerialPort;
 use slip_codec::{SlipDecoder, SlipEncoder};
@@ -98,6 +98,14 @@ impl CSKBurn {
         }
 
         Err(Error::io(io::ErrorKind::TimedOut))
+    }
+
+    pub fn flash_info(&mut self) -> Result<FlashInfo> {
+        self.command(Request::ReadFlashId, None)
+    }
+
+    pub fn chip_id(&mut self) -> Result<ChipId> {
+        self.command(Request::ReadChipId, None)
     }
 
     pub fn memory_write(
