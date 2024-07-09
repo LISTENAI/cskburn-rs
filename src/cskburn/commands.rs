@@ -101,6 +101,26 @@ impl TryFrom<ResponseEnvelope> for ChipId {
 #[bw(little)]
 #[derive(Debug)]
 pub enum Request {
+    FlashBegin {
+        size: u32,
+        blocks: u32,
+        block_size: u32,
+        offset: u32,
+    },
+    FlashData {
+        #[bw(calc = data.len() as u32)]
+        size: u32,
+        seq: u32,
+        #[bw(calc = 0)]
+        rev1: u32,
+        #[bw(calc = 0)]
+        rev2: u32,
+        data: Vec<u8>,
+    },
+    FlashEnd {
+        #[bw(calc = 0xFF)]
+        rev: u32,
+    },
     MemoryBegin {
         size: u32,
         blocks: u32,
@@ -128,6 +148,9 @@ pub enum Request {
 impl Request {
     pub fn command(&self) -> Command {
         match self {
+            Request::FlashBegin { .. } => Command::FlashBegin,
+            Request::FlashData { .. } => Command::FlashData,
+            Request::FlashEnd { .. } => Command::FlashEnd,
             Request::MemoryBegin { .. } => Command::MemoryBegin,
             Request::MemoryEnd { .. } => Command::MemoryEnd,
             Request::MemoryData { .. } => Command::MemoryData,
@@ -139,6 +162,7 @@ impl Request {
 
     pub fn checksum(&self) -> u32 {
         match self {
+            Request::FlashData { data, .. } => utils::checksum(data),
             Request::MemoryData { data, .. } => utils::checksum(data),
             _ => 0,
         }

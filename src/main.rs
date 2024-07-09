@@ -181,6 +181,20 @@ fn main() {
 
     let flash_id = cskburn.flash_info().expect("Failed to read flash ID");
     println!("Flash ID: {}", flash_id);
+
+    match cli.command {
+        Commands::Write(args) => {
+            for spec in args.files {
+                let addr = spec.addr;
+                let mut file = File::open(spec.path).expect("Failed to open file");
+
+                cskburn
+                    .flash_write(addr, &mut file)
+                    .expect("Failed to write file");
+            }
+        }
+        _ => {}
+    }
 }
 
 fn choose_port() -> Result<String, &'static str> {

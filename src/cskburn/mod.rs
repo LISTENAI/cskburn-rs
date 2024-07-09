@@ -22,6 +22,7 @@ pub use family::Family;
 type Result<T> = std::result::Result<T, Error>;
 
 const MEMORY_BLOCK_SIZE: usize = 2048;
+const FLASH_BLOCK_SIZE: usize = 4096;
 
 pub trait Source: Read {
     fn size(&self) -> io::Result<usize>;
@@ -153,6 +154,45 @@ impl CSKBurn {
             },
             None,
         )?;
+
+        Ok(size)
+    }
+
+    pub fn flash_write(&mut self, offset: u32, source: &mut dyn Source) -> Result<usize> {
+        let size: usize = source.size()?;
+        let blocks = utils::blocks(size, FLASH_BLOCK_SIZE);
+        debug!(
+            "begin flash write, total size: {}, blocks: {}",
+            size, blocks
+        );
+
+        self.command(
+            Request::FlashBegin {
+                size: size as u32,
+                blocks: blocks as u32,
+                block_size: FLASH_BLOCK_SIZE as u32,
+                offset,
+            },
+            None,
+        )?;
+
+        let mut buf = vec![0; FLASH_BLOCK_SIZE];
+        for seq in 0..blocks as u32 {
+            let read = source.read(&mut buf)?;
+            if read == 0 {
+                break;
+            }
+
+            self.command(
+                Request::FlashData {
+                    seq,
+                    data: buf[..read].to_vec(),
+                },
+                None,
+            )?;
+        }
+
+        self.command(Request::FlashEnd {}, None)?;
 
         Ok(size)
     }
