@@ -141,6 +141,10 @@ pub enum Request {
         data: Vec<u8>,
     },
     Sync(#[bw(calc = SYNC_STUB)] [u8; 36]),
+    ChangeBaudrate {
+        to: u32,
+        from: u32,
+    },
     ReadFlashId,
     ReadChipId,
 }
@@ -155,6 +159,7 @@ impl Request {
             Request::MemoryEnd { .. } => Command::MemoryEnd,
             Request::MemoryData { .. } => Command::MemoryData,
             Request::Sync() => Command::Sync,
+            Request::ChangeBaudrate { .. } => Command::ChangeBaudrate,
             Request::ReadFlashId => Command::ReadFlashId,
             Request::ReadChipId => Command::ReadChipId,
         }

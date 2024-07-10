@@ -2,7 +2,7 @@ mod cskburn;
 mod types;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use cskburn::{Family, Source};
+use cskburn::{Family, ProbeTarget, Source};
 use dialoguer::Select;
 use log::trace;
 use serialport::available_ports;
@@ -143,7 +143,7 @@ fn main() {
         .open()
         .expect("Failed to open device");
 
-    if !cskburn.probe(None).is_ok() {
+    if !cskburn.probe(ProbeTarget::ROM, None).is_ok() {
         let mut success = false;
 
         for _ in 0..PROBE_RESET_ATTEMPTS {
@@ -151,7 +151,10 @@ fn main() {
                 .reset(true, Some(RESET_INTERVAL))
                 .expect("Failed to reset device");
 
-            if cskburn.probe(Some(PROBE_SYNC_ATTEMPTS)).is_ok() {
+            if cskburn
+                .probe(ProbeTarget::ROM, Some(PROBE_SYNC_ATTEMPTS))
+                .is_ok()
+            {
                 success = true;
                 break;
             }
@@ -171,7 +174,7 @@ fn main() {
     println!("Burner written");
 
     cskburn
-        .probe(Some(PROBE_SYNC_ATTEMPTS))
+        .probe(ProbeTarget::Burner, Some(PROBE_SYNC_ATTEMPTS))
         .expect("Failed entering burner mode");
 
     println!("Burner entered");

@@ -11,6 +11,13 @@ impl Family {
             Family::CSK6 => include_bytes!("./burners/burner_6.bin").to_vec(),
         }
     }
+
+    pub fn rom_supports_change_baudrate(&self) -> bool {
+        match self {
+            Family::CSK4 => false,
+            Family::CSK6 => true,
+        }
+    }
 }
 
 impl TryFrom<u8> for Family {

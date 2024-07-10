@@ -21,6 +21,8 @@ pub use family::Family;
 
 type Result<T> = std::result::Result<T, Error>;
 
+const BAUD_RATE_DEFAULT: u32 = 115200;
+
 const MEMORY_BLOCK_SIZE: usize = 2048;
 const FLASH_BLOCK_SIZE: usize = 4096;
 
@@ -53,7 +55,7 @@ pub fn new(path: String, baud: u32, chip: Family) -> CSKBurnBuilder {
 
 impl CSKBurnBuilder {
     pub fn open(self) -> Result<CSKBurn> {
-        let port = serialport::new(self.path, 115200)
+        let port = serialport::new(self.path, BAUD_RATE_DEFAULT)
             .flow_control(serialport::FlowControl::None)
             .open()?;
 
@@ -75,6 +77,12 @@ pub struct CSKBurn {
     slip_dec: SlipDecoder,
 }
 
+#[derive(PartialEq)]
+pub enum ProbeTarget {
+    ROM,
+    Burner,
+}
+
 impl CSKBurn {
     pub fn reset(&mut self, boot_mode: bool, reset_interval: Option<Duration>) -> Result<()> {
         trace!("set RTS: {}", boot_mode);
@@ -91,7 +99,32 @@ impl CSKBurn {
         Ok(())
     }
 
-    pub fn probe(&mut self, attempts: Option<usize>) -> Result<()> {
+    pub fn probe(&mut self, target: ProbeTarget, attempts: Option<usize>) -> Result<()> {
+        if target == ProbeTarget::Burner && self.port.baud_rate()? != BAUD_RATE_DEFAULT {
+            self.port.clear(serialport::ClearBuffer::All)?;
+            self.port.set_baud_rate(BAUD_RATE_DEFAULT)?;
+        }
+
+        self.sync(attempts)?;
+
+        if self.baud != BAUD_RATE_DEFAULT && self.chip.rom_supports_change_baudrate() {
+            self.command(
+                Request::ChangeBaudrate {
+                    to: self.baud,
+                    from: BAUD_RATE_DEFAULT,
+                },
+                None,
+            )?;
+            self.port.clear(serialport::ClearBuffer::All)?;
+            self.port.set_baud_rate(self.baud)?;
+
+            self.sync(attempts)?;
+        }
+
+        Ok(())
+    }
+
+    fn sync(&mut self, attempts: Option<usize>) -> Result<()> {
         for _ in 0..attempts.unwrap_or(1) {
             if self.command::<()>(Request::Sync(), None).is_ok() {
                 return Ok(());
