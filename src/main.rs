@@ -4,11 +4,11 @@ mod types;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use cskburn::{Family, ProbeTarget, Source};
 use dialoguer::Select;
-use log::trace;
+use log::{debug, trace};
 use serialport::available_ports;
-use std::fs::File;
-use std::io::Cursor;
+use std::io::{Cursor, Seek};
 use std::time::Duration;
+use std::{fs::File, io::Read};
 use types::{FileSpec, RegionSpec};
 
 /// Number of times to attempt to reset the device when probing before giving up.
@@ -194,6 +194,35 @@ fn main() {
                 cskburn
                     .flash_write(addr, &mut file)
                     .expect("Failed to write file");
+
+                if args.verify_all {
+                    let expect_md5: [u8; 16] = md5::compute({
+                        let mut buf = Vec::new();
+                        file.rewind().unwrap();
+                        file.read_to_end(buf.as_mut()).unwrap();
+                        buf
+                    })
+                    .into();
+
+                    let actual_md5 = cskburn
+                        .flash_verify(addr, file.size().unwrap() as u32)
+                        .expect("Failed to verify file");
+
+                    debug!("expect: {:02x?}", expect_md5);
+                    debug!("actual: {:02x?}", actual_md5);
+
+                    if expect_md5 != actual_md5 {
+                        panic!("File verification failed");
+                    }
+                }
+            }
+        }
+        Commands::Verify(args) => {
+            for spec in args.regions {
+                let md5 = cskburn
+                    .flash_verify(spec.addr, spec.size)
+                    .expect("Failed to verify flash region");
+                println!("{:02x?}", md5);
             }
         }
         _ => {}

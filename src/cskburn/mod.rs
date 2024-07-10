@@ -229,4 +229,8 @@ impl CSKBurn {
 
         Ok(size)
     }
+
+    pub fn flash_verify(&mut self, offset: u32, size: u32) -> Result<[u8; 16]> {
+        self.command(Request::FlashMd5 { offset, size }, None)
+    }
 }

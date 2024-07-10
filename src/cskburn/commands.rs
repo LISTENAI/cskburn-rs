@@ -145,6 +145,14 @@ pub enum Request {
         to: u32,
         from: u32,
     },
+    FlashMd5 {
+        offset: u32,
+        size: u32,
+        #[bw(calc = 0)]
+        rev1: u32,
+        #[bw(calc = 0)]
+        rev2: u32,
+    },
     ReadFlashId,
     ReadChipId,
 }
@@ -160,6 +168,7 @@ impl Request {
             Request::MemoryData { .. } => Command::MemoryData,
             Request::Sync() => Command::Sync,
             Request::ChangeBaudrate { .. } => Command::ChangeBaudrate,
+            Request::FlashMd5 { .. } => Command::FlashMd5,
             Request::ReadFlashId => Command::ReadFlashId,
             Request::ReadChipId => Command::ReadChipId,
         }

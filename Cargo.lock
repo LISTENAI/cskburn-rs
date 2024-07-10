@@ -187,6 +187,7 @@ dependencies = [
  "dialoguer",
  "env_logger",
  "log",
+ "md5",
  "serialport",
  "slip-codec",
 ]
@@ -329,6 +330,12 @@ checksum = "19b955cdeb2a02b9117f121ce63aa52d08ade45de53e48fe6a38b39c10f6f709"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "md5"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "490cc448043f947bae3cbee9c203358d62dbee0db12107a74be5c30ccfd09771"
 
 [[package]]
 name = "memchr"
