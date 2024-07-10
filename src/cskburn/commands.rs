@@ -153,6 +153,11 @@ pub enum Request {
         #[bw(calc = 0)]
         rev2: u32,
     },
+    EraseFlash,
+    EraseRegion {
+        offset: u32,
+        size: u32,
+    },
     ReadFlashId,
     ReadChipId,
 }
@@ -169,6 +174,8 @@ impl Request {
             Request::Sync() => Command::Sync,
             Request::ChangeBaudrate { .. } => Command::ChangeBaudrate,
             Request::FlashMd5 { .. } => Command::FlashMd5,
+            Request::EraseFlash => Command::EraseFlash,
+            Request::EraseRegion { .. } => Command::EraseRegion,
             Request::ReadFlashId => Command::ReadFlashId,
             Request::ReadChipId => Command::ReadChipId,
         }

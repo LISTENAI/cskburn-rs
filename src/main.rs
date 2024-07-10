@@ -2,7 +2,7 @@ mod cskburn;
 mod types;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use cskburn::{Family, ProbeTarget, Source};
+use cskburn::{EraseTarget, Family, ProbeTarget, Source};
 use dialoguer::Select;
 use log::{debug, trace};
 use serialport::available_ports;
@@ -187,6 +187,12 @@ fn main() {
 
     match cli.command {
         Commands::Write(args) => {
+            if args.erase_all {
+                cskburn
+                    .flash_erase(EraseTarget::Entire)
+                    .expect("Failed to erase flash");
+            }
+
             for spec in args.files {
                 let addr = spec.addr;
                 let mut file = File::open(spec.path).expect("Failed to open file");
@@ -217,6 +223,21 @@ fn main() {
                 }
             }
         }
+        Commands::Erase(args) => {
+            for spec in args.regions {
+                cskburn
+                    .flash_erase(EraseTarget::Region {
+                        offset: spec.addr,
+                        size: spec.size,
+                    })
+                    .expect("Failed to erase flash region");
+            }
+        }
+        Commands::EraseAll => {
+            cskburn
+                .flash_erase(EraseTarget::Entire)
+                .expect("Failed to erase flash");
+        }
         Commands::Verify(args) => {
             for spec in args.regions {
                 let md5 = cskburn
@@ -225,7 +246,6 @@ fn main() {
                 println!("{:02x?}", md5);
             }
         }
-        _ => {}
     }
 }
 

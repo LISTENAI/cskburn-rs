@@ -83,6 +83,11 @@ pub enum ProbeTarget {
     Burner,
 }
 
+pub enum EraseTarget {
+    Entire,
+    Region { offset: u32, size: u32 },
+}
+
 impl CSKBurn {
     pub fn reset(&mut self, boot_mode: bool, reset_interval: Option<Duration>) -> Result<()> {
         trace!("set RTS: {}", boot_mode);
@@ -232,5 +237,14 @@ impl CSKBurn {
 
     pub fn flash_verify(&mut self, offset: u32, size: u32) -> Result<[u8; 16]> {
         self.command(Request::FlashMd5 { offset, size }, None)
+    }
+
+    pub fn flash_erase(&mut self, target: EraseTarget) -> Result<()> {
+        match target {
+            EraseTarget::Entire => self.command(Request::EraseFlash, None),
+            EraseTarget::Region { offset, size } => {
+                self.command(Request::EraseRegion { offset, size }, None)
+            }
+        }
     }
 }
