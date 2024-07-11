@@ -113,13 +113,10 @@ impl CSKBurn {
         self.sync(attempts)?;
 
         if self.baud != BAUD_RATE_DEFAULT && self.chip.rom_supports_change_baudrate() {
-            self.command(
-                Request::ChangeBaudrate {
-                    to: self.baud,
-                    from: BAUD_RATE_DEFAULT,
-                },
-                None,
-            )?;
+            self.command(Request::ChangeBaudrate {
+                to: self.baud,
+                from: BAUD_RATE_DEFAULT,
+            })?;
             self.port.clear(serialport::ClearBuffer::All)?;
             self.port.set_baud_rate(self.baud)?;
 
@@ -131,7 +128,7 @@ impl CSKBurn {
 
     fn sync(&mut self, attempts: Option<usize>) -> Result<()> {
         for _ in 0..attempts.unwrap_or(1) {
-            if self.command::<()>(Request::Sync(), None).is_ok() {
+            if self.command::<()>(Request::Sync()).is_ok() {
                 return Ok(());
             }
         }
@@ -140,11 +137,11 @@ impl CSKBurn {
     }
 
     pub fn flash_info(&mut self) -> Result<FlashInfo> {
-        self.command(Request::ReadFlashId, None)
+        self.command(Request::ReadFlashId)
     }
 
     pub fn chip_id(&mut self) -> Result<ChipId> {
-        self.command(Request::ReadChipId, None)
+        self.command(Request::ReadChipId)
     }
 
     pub fn memory_write(
@@ -160,15 +157,12 @@ impl CSKBurn {
             size, blocks
         );
 
-        self.command(
-            Request::MemoryBegin {
-                size: size as u32,
-                blocks: blocks as u32,
-                block_size: MEMORY_BLOCK_SIZE as u32,
-                offset,
-            },
-            None,
-        )?;
+        self.command(Request::MemoryBegin {
+            size: size as u32,
+            blocks: blocks as u32,
+            block_size: MEMORY_BLOCK_SIZE as u32,
+            offset,
+        })?;
 
         let mut buf = vec![0; MEMORY_BLOCK_SIZE];
         for seq in 0..blocks as u32 {
@@ -177,21 +171,15 @@ impl CSKBurn {
                 break;
             }
 
-            self.command(
-                Request::MemoryData {
-                    seq,
-                    data: buf[..read].to_vec(),
-                },
-                None,
-            )?;
+            self.command(Request::MemoryData {
+                seq,
+                data: buf[..read].to_vec(),
+            })?;
         }
 
-        self.command(
-            Request::MemoryEnd {
-                action: action.unwrap_or(MemoryAction::Boot()),
-            },
-            None,
-        )?;
+        self.command(Request::MemoryEnd {
+            action: action.unwrap_or(MemoryAction::Boot()),
+        })?;
 
         Ok(size)
     }
@@ -204,15 +192,12 @@ impl CSKBurn {
             size, blocks
         );
 
-        self.command(
-            Request::FlashBegin {
-                size: size as u32,
-                blocks: blocks as u32,
-                block_size: FLASH_BLOCK_SIZE as u32,
-                offset,
-            },
-            None,
-        )?;
+        self.command(Request::FlashBegin {
+            size: size as u32,
+            blocks: blocks as u32,
+            block_size: FLASH_BLOCK_SIZE as u32,
+            offset,
+        })?;
 
         let mut buf = vec![0; FLASH_BLOCK_SIZE];
         for seq in 0..blocks as u32 {
@@ -221,29 +206,26 @@ impl CSKBurn {
                 break;
             }
 
-            self.command(
-                Request::FlashData {
-                    seq,
-                    data: buf[..read].to_vec(),
-                },
-                None,
-            )?;
+            self.command(Request::FlashData {
+                seq,
+                data: buf[..read].to_vec(),
+            })?;
         }
 
-        self.command(Request::FlashEnd {}, None)?;
+        self.command(Request::FlashEnd {})?;
 
         Ok(size)
     }
 
     pub fn flash_verify(&mut self, offset: u32, size: u32) -> Result<[u8; 16]> {
-        self.command(Request::FlashMd5 { offset, size }, None)
+        self.command(Request::FlashMd5 { offset, size })
     }
 
     pub fn flash_erase(&mut self, target: EraseTarget) -> Result<()> {
         match target {
-            EraseTarget::Entire => self.command(Request::EraseFlash, None),
+            EraseTarget::Entire => self.command(Request::EraseFlash),
             EraseTarget::Region { offset, size } => {
-                self.command(Request::EraseRegion { offset, size }, None)
+                self.command(Request::EraseRegion { offset, size })
             }
         }
     }

@@ -3,6 +3,7 @@ use binrw::{binread, binrw, binwrite, BinRead, BinWrite};
 use std::{
     fmt::{self, Debug},
     io::{self, Cursor},
+    time::Duration,
 };
 
 const SYNC_STUB: [u8; 36] = [
@@ -10,6 +11,12 @@ const SYNC_STUB: [u8; 36] = [
     0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55,
     0x55, 0x55, 0x55, 0x55,
 ];
+
+const TIMEOUT_MEMORY_DATA: Duration = Duration::from_millis(500);
+const TIMEOUT_FLASH_DATA: Duration = Duration::from_secs(1);
+const TIMEOUT_FLASH_END: Duration = Duration::from_secs(2);
+const TIMEOUT_FLASH_ERASE_PER_MB: Duration = Duration::from_secs(10);
+const TIMEOUT_FLASH_MD5SUM_PER_MB: Duration = Duration::from_secs(1);
 
 #[binrw]
 #[brw(repr = u8)]
@@ -186,6 +193,21 @@ impl Request {
             Request::FlashData { data, .. } => utils::checksum(data),
             Request::MemoryData { data, .. } => utils::checksum(data),
             _ => 0,
+        }
+    }
+
+    pub fn timeout(&self) -> Option<Duration> {
+        match self {
+            Request::MemoryData { .. } => Some(TIMEOUT_MEMORY_DATA),
+            Request::FlashData { .. } => Some(TIMEOUT_FLASH_DATA),
+            Request::FlashEnd { .. } => Some(TIMEOUT_FLASH_END),
+            Request::EraseRegion { size, .. } => {
+                Some(TIMEOUT_FLASH_ERASE_PER_MB * (*size / 1024 / 1024) as u32)
+            }
+            Request::FlashMd5 { size, .. } => {
+                Some(TIMEOUT_FLASH_MD5SUM_PER_MB * (*size / 1024 / 1024) as u32)
+            }
+            _ => None,
         }
     }
 }

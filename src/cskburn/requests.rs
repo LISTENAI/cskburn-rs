@@ -5,12 +5,14 @@ use super::{
 use binrw::{binread, binwrite, BinRead, BinWrite};
 use log::{debug, trace};
 use std::{
+    cmp,
     fmt::Debug,
     io::{self, Cursor, Read, Write},
     time::Duration,
 };
 
-const TIMEOUT_DEFAULT: Duration = Duration::from_millis(500);
+const TIMEOUT_WRITE_DEFAULT: Duration = Duration::from_millis(1000);
+const TIMEOUT_READ_DEFAULT: Duration = Duration::from_millis(200);
 
 #[binwrite]
 #[bw(little, magic = 0x00u8)]
@@ -74,11 +76,16 @@ impl<const N: usize> TryFrom<ResponseEnvelope> for [u8; N] {
 }
 
 impl super::CSKBurn {
-    pub fn command<T>(&mut self, request: Request, timeout: Option<Duration>) -> Result<T>
+    pub fn command<T>(&mut self, request: Request) -> Result<T>
     where
         T: TryFrom<ResponseEnvelope>,
     {
         trace!("{:02x?}", request);
+
+        let read_timeout = cmp::max(
+            request.timeout().unwrap_or(TIMEOUT_READ_DEFAULT),
+            TIMEOUT_READ_DEFAULT,
+        );
 
         let req: RequestEnvelope = RequestEnvelope {
             command: request.command(),
@@ -96,14 +103,14 @@ impl super::CSKBurn {
         let mut writer = Cursor::new(Vec::new());
         req.write(&mut writer)?;
 
-        self.port.set_timeout(Duration::from_millis(1000))?;
+        self.port.set_timeout(TIMEOUT_WRITE_DEFAULT)?;
         self.write(writer.get_ref())?;
 
         self.flush()?;
 
         let mut reader = vec![0; 1024];
 
-        self.port.set_timeout(timeout.unwrap_or(TIMEOUT_DEFAULT))?;
+        self.port.set_timeout(read_timeout)?;
         self.read(&mut reader)?;
 
         let res = ResponseEnvelope::read(&mut Cursor::new(reader))?;
