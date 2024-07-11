@@ -2,18 +2,18 @@ mod cskburn;
 mod types;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use console::Style;
 use cskburn::{EraseTarget, Family, ProbeTarget, Source};
 use dialoguer::Select;
+use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, trace};
 use serialport::available_ports;
-use std::io::{Cursor, Seek};
-use std::time::Duration;
-use std::{fs::File, io::Read};
-use types::{FileSpec, RegionSpec};
+use std::{borrow::Cow, fmt::Display, fs::File, io::Cursor, time::Duration};
+use types::{FileSpec, Md5, RegionSpec};
 
 /// Number of times to attempt to reset the device when probing before giving up.
 /// In each attempt, a series of SYNC commands will be issued.
-const PROBE_RESET_ATTEMPTS: usize = 2;
+const PROBE_RESET_ATTEMPTS: usize = 5;
 
 /// Number of times to attempt to issue a SYNC command when probing. Each attempt
 /// takes about 500 ms.
@@ -116,6 +116,8 @@ struct VerifyArgs {
 fn main() {
     env_logger::init();
 
+    // Parse command line arguments
+
     let cli = Cli::parse();
     trace!("{:?}", cli);
 
@@ -139,14 +141,28 @@ fn main() {
         Box::new(Cursor::new(chip.burner()))
     };
 
+    // Create and open the device
+
     let mut cskburn = cskburn::new(path, cli.baud, chip)
         .open()
         .expect("Failed to open device");
 
+    // Probe the device
+
+    let progress = print_spinner("Probing");
+
     if !cskburn.probe(ProbeTarget::ROM, None).is_ok() {
         let mut success = false;
 
-        for _ in 0..PROBE_RESET_ATTEMPTS {
+        for attempts in 0..PROBE_RESET_ATTEMPTS {
+            if attempts > 0 {
+                progress.set_prefix(format!(
+                    "reset attempt {}/{}",
+                    attempts + 1,
+                    PROBE_RESET_ATTEMPTS
+                ));
+            }
+
             cskburn
                 .reset(true, Some(RESET_INTERVAL))
                 .expect("Failed to reset device");
@@ -161,29 +177,45 @@ fn main() {
         }
 
         if !success {
-            panic!("Failed to detect device after multiple attempts");
+            progress.finish_and_clear();
+            println!("ERROR: Failed to detect device after multiple attempts");
+            return;
         }
     }
 
-    println!("Device detected");
+    progress.finish_and_clear();
+
+    // Enter burner mode
+
+    let progress = print_progress("Entering", burner.size().unwrap());
 
     cskburn
-        .memory_write(0, &mut *burner, None)
+        .memory_write(
+            0,
+            &mut *burner,
+            None,
+            Some(&mut |written: usize, _: usize| progress.set_position(written as u64)),
+        )
         .expect("Failed to write burner image");
-
-    println!("Burner written");
 
     cskburn
         .probe(ProbeTarget::Burner, Some(PROBE_SYNC_ATTEMPTS))
         .expect("Failed entering burner mode");
 
-    println!("Burner entered");
+    progress.finish_and_clear();
+
+    // Read chip and flash info
 
     let chip_id = cskburn.chip_id().expect("Failed to read chip ID");
-    println!("Chip ID: {}", chip_id);
+    print_line("chip-id", format!("{}", chip_id));
 
     let flash_id = cskburn.flash_info().expect("Failed to read flash ID");
-    println!("Flash ID: {}", flash_id);
+    print_line(
+        "flash-id",
+        format!("{} ({} MiB)", flash_id, flash_id.size() / 1024 / 1024),
+    );
+
+    // Run desired command
 
     match cli.command {
         Commands::Write(args) => {
@@ -193,26 +225,47 @@ fn main() {
                     .expect("Failed to erase flash");
             }
 
-            for spec in args.files {
-                let addr = spec.addr;
-                let mut file = File::open(spec.path).expect("Failed to open file");
+            let files = args
+                .files
+                .into_iter()
+                .map(|spec| {
+                    let file = spec.as_source().expect("Failed to open file");
+                    let size = file.size().expect("Failed to get file size");
+                    (spec, file, size)
+                })
+                .collect::<Vec<_>>();
+
+            let count = files.len();
+            for (i, (spec, mut file, size)) in files.into_iter().enumerate() {
+                print_line(
+                    format!("{}/{}", i + 1, count),
+                    format!("0x{:08x}:{}", spec.addr, spec.path),
+                );
+
+                let progress = print_progress("Writing", size);
 
                 cskburn
-                    .flash_write(addr, &mut file)
+                    .flash_write(
+                        spec.addr,
+                        &mut *file,
+                        Some(&mut |written: usize, _: usize| progress.set_position(written as u64)),
+                    )
                     .expect("Failed to write file");
 
-                if args.verify_all {
-                    let expect_md5: [u8; 16] = md5::compute({
-                        let mut buf = Vec::new();
-                        file.rewind().unwrap();
-                        file.read_to_end(buf.as_mut()).unwrap();
-                        buf
-                    })
-                    .into();
+                progress.finish_and_clear();
 
-                    let actual_md5 = cskburn
-                        .flash_verify(addr, file.size().unwrap() as u32)
-                        .expect("Failed to verify file");
+                print_step(
+                    "Wrote",
+                    format!("{} bytes, took {}s", size, progress.elapsed().as_secs()),
+                );
+
+                if args.verify_all {
+                    let progress = print_spinner("Verifying");
+
+                    let expect_md5 = Md5(spec.md5().expect("Failed to calculate file MD5"));
+                    let actual_md5 = Md5(cskburn
+                        .flash_verify(spec.addr, size as u32)
+                        .expect("Failed to verify file"));
 
                     debug!("expect: {:02x?}", expect_md5);
                     debug!("actual: {:02x?}", actual_md5);
@@ -220,8 +273,14 @@ fn main() {
                     if expect_md5 != actual_md5 {
                         panic!("File verification failed");
                     }
+
+                    progress.finish_and_clear();
+
+                    print_step("Verified", format!("{}", actual_md5));
                 }
             }
+
+            print_step("Done", "".to_string());
         }
         Commands::Erase(args) => {
             for spec in args.regions {
@@ -277,4 +336,47 @@ fn choose_port() -> Result<String, &'static str> {
         .map_err(|_| "Failed to get port choice")?;
 
     Ok(ports[choice].clone())
+}
+
+fn print_spinner<T>(prefix: T) -> ProgressBar
+where
+    T: Into<Cow<'static, str>>,
+{
+    let style = ProgressStyle::with_template("{msg:>12.cyan.bold} {spinner} {prefix}").unwrap();
+    let spinner = ProgressBar::new_spinner();
+    spinner.set_style(style);
+    spinner.set_message(prefix);
+    spinner.enable_steady_tick(Duration::from_millis(100));
+    spinner
+}
+
+fn print_progress<T>(prefix: T, len: usize) -> ProgressBar
+where
+    T: Into<Cow<'static, str>>,
+{
+    let style = ProgressStyle::with_template("{msg:>12.cyan.bold} [{bar:20}] {binary_bytes}/{binary_total_bytes} @ {bytes_per_sec} (eta {eta})")
+            .unwrap()
+            .progress_chars("=> ");
+    let progress = ProgressBar::new(len as u64);
+    progress.set_style(style);
+    progress.set_message(prefix);
+    progress
+}
+
+fn print_step<T>(prefix: T, message: String)
+where
+    T: Into<Cow<'static, str>> + Display,
+{
+    println!(
+        "{:>12} {}",
+        Style::new().green().bold().apply_to(prefix),
+        message
+    )
+}
+
+fn print_line<T>(prefix: T, message: String)
+where
+    T: Into<Cow<'static, str>> + Display,
+{
+    println!("{:>12} {}", prefix, message)
 }

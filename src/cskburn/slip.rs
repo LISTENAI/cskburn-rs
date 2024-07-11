@@ -1,4 +1,5 @@
 use log::{error, trace};
+use slip_codec::SlipError;
 use std::io::{Error, ErrorKind, Read, Result, Write};
 
 impl Write for super::CSKBurn {
@@ -26,6 +27,10 @@ impl Read for super::CSKBurn {
                 trace!("rx len: {}", size);
                 buf[..size].copy_from_slice(&out[..size]);
                 return Ok(size);
+            }
+            Err(SlipError::ReadError(err)) if err.kind() == ErrorKind::TimedOut => {
+                trace!("rx timeout");
+                return Err(Error::new(ErrorKind::TimedOut, "Timeout"));
             }
             Err(e) => {
                 error!("rx error: {:?}", e);

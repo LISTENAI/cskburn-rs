@@ -144,12 +144,16 @@ impl CSKBurn {
         self.command(Request::ReadChipId)
     }
 
-    pub fn memory_write(
+    pub fn memory_write<F>(
         &mut self,
         offset: u32,
         source: &mut dyn Source,
         action: Option<MemoryAction>,
-    ) -> Result<usize> {
+        mut on_progress: Option<F>,
+    ) -> Result<usize>
+    where
+        F: FnMut(usize, usize),
+    {
         let size: usize = source.size()?;
         let blocks = utils::blocks(size, MEMORY_BLOCK_SIZE);
         debug!(
@@ -165,6 +169,7 @@ impl CSKBurn {
         })?;
 
         let mut buf = vec![0; MEMORY_BLOCK_SIZE];
+        let mut written = 0;
         for seq in 0..blocks as u32 {
             let read = source.read(&mut buf)?;
             if read == 0 {
@@ -175,6 +180,11 @@ impl CSKBurn {
                 seq,
                 data: buf[..read].to_vec(),
             })?;
+
+            written += read;
+            if let Some(ref mut on_progress) = on_progress {
+                on_progress(written, size);
+            }
         }
 
         self.command(Request::MemoryEnd {
@@ -184,7 +194,15 @@ impl CSKBurn {
         Ok(size)
     }
 
-    pub fn flash_write(&mut self, offset: u32, source: &mut dyn Source) -> Result<usize> {
+    pub fn flash_write<F>(
+        &mut self,
+        offset: u32,
+        source: &mut dyn Source,
+        mut on_progress: Option<F>,
+    ) -> Result<usize>
+    where
+        F: FnMut(usize, usize),
+    {
         let size: usize = source.size()?;
         let blocks = utils::blocks(size, FLASH_BLOCK_SIZE);
         debug!(
@@ -200,6 +218,7 @@ impl CSKBurn {
         })?;
 
         let mut buf = vec![0; FLASH_BLOCK_SIZE];
+        let mut written = 0;
         for seq in 0..blocks as u32 {
             let read = source.read(&mut buf)?;
             if read == 0 {
@@ -210,6 +229,11 @@ impl CSKBurn {
                 seq,
                 data: buf[..read].to_vec(),
             })?;
+
+            written += read;
+            if let Some(ref mut on_progress) = on_progress {
+                on_progress(written, size);
+            }
         }
 
         self.command(Request::FlashEnd {})?;
