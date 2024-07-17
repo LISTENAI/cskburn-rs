@@ -133,7 +133,7 @@ impl CSKBurn {
             }
         }
 
-        Err(Error::io(io::ErrorKind::TimedOut))
+        Err(io::ErrorKind::TimedOut.into())
     }
 
     pub fn flash_info(&mut self) -> Result<FlashInfo> {

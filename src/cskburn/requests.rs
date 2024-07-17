@@ -126,12 +126,12 @@ impl super::CSKBurn {
 
         if res.code != 0 {
             if res.code & 0xff == 0x01 {
-                return Err(Error::burner((res.code >> 8) as u8));
+                return Err(Error::Burner((res.code >> 8) as u8));
             } else {
-                return Err(Error::burner((res.code & 0xff) as u8));
+                return Err(Error::Burner((res.code & 0xff) as u8));
             }
         }
 
-        T::try_from(res).map_err(|_| Error::io(io::ErrorKind::InvalidData))
+        T::try_from(res).map_err(|_| io::ErrorKind::InvalidData.into())
     }
 }
