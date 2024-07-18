@@ -1,23 +1,18 @@
 mod commands;
 mod error;
-mod family;
 mod requests;
 mod slip;
+mod types;
 mod utils;
 
 use commands::{ChipId, FlashInfo, MemoryAction, Request};
 use log::{debug, trace};
 use serialport::SerialPort;
 use slip_codec::{SlipDecoder, SlipEncoder};
-use std::{
-    fs::File,
-    io::{self, Cursor, Read},
-    thread::sleep,
-    time::Duration,
-};
+use std::{io, thread::sleep, time::Duration};
 
 pub use error::Error;
-pub use family::Family;
+pub use types::{family::Family, image::Image, region::Region, source::Source};
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -25,22 +20,6 @@ const BAUD_RATE_DEFAULT: u32 = 115200;
 
 const MEMORY_BLOCK_SIZE: usize = 2048;
 const FLASH_BLOCK_SIZE: usize = 4096;
-
-pub trait Source: Read {
-    fn size(&self) -> io::Result<usize>;
-}
-
-impl Source for File {
-    fn size(&self) -> io::Result<usize> {
-        self.metadata().map(|m| m.len() as usize)
-    }
-}
-
-impl<T: AsRef<[u8]>> Source for Cursor<T> {
-    fn size(&self) -> io::Result<usize> {
-        Ok(self.get_ref().as_ref().len())
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CSKBurnBuilder {
@@ -85,7 +64,7 @@ pub enum ProbeTarget {
 
 pub enum EraseTarget {
     Entire,
-    Region { offset: u32, size: u32 },
+    Region(Region),
 }
 
 impl CSKBurn {
@@ -146,8 +125,7 @@ impl CSKBurn {
 
     pub fn memory_write<F>(
         &mut self,
-        offset: u32,
-        source: &mut dyn Source,
+        source: &mut Image,
         action: Option<MemoryAction>,
         mut on_progress: Option<F>,
     ) -> Result<usize>
@@ -165,13 +143,13 @@ impl CSKBurn {
             size: size as u32,
             blocks: blocks as u32,
             block_size: MEMORY_BLOCK_SIZE as u32,
-            offset,
+            offset: source.addr,
         })?;
 
         let mut buf = vec![0; MEMORY_BLOCK_SIZE];
         let mut written = 0;
         for seq in 0..blocks as u32 {
-            let read = source.read(&mut buf)?;
+            let read = source.source.read(&mut buf)?;
             if read == 0 {
                 break;
             }
@@ -196,8 +174,7 @@ impl CSKBurn {
 
     pub fn flash_write<F>(
         &mut self,
-        offset: u32,
-        source: &mut dyn Source,
+        source: &mut Image,
         mut on_progress: Option<F>,
     ) -> Result<usize>
     where
@@ -214,13 +191,13 @@ impl CSKBurn {
             size: size as u32,
             blocks: blocks as u32,
             block_size: FLASH_BLOCK_SIZE as u32,
-            offset,
+            offset: source.addr,
         })?;
 
         let mut buf = vec![0; FLASH_BLOCK_SIZE];
         let mut written = 0;
         for seq in 0..blocks as u32 {
-            let read = source.read(&mut buf)?;
+            let read = source.source.read(&mut buf)?;
             if read == 0 {
                 break;
             }
@@ -241,16 +218,20 @@ impl CSKBurn {
         Ok(size)
     }
 
-    pub fn flash_verify(&mut self, offset: u32, size: u32) -> Result<[u8; 16]> {
-        self.command(Request::FlashMd5 { offset, size })
+    pub fn flash_verify(&mut self, region: Region) -> Result<[u8; 16]> {
+        self.command(Request::FlashMd5 {
+            offset: region.addr,
+            size: region.size,
+        })
     }
 
     pub fn flash_erase(&mut self, target: EraseTarget) -> Result<()> {
         match target {
             EraseTarget::Entire => self.command(Request::EraseFlash),
-            EraseTarget::Region { offset, size } => {
-                self.command(Request::EraseRegion { offset, size })
-            }
+            EraseTarget::Region(region) => self.command(Request::EraseRegion {
+                offset: region.addr,
+                size: region.size,
+            }),
         }
     }
 }

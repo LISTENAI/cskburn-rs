@@ -3,13 +3,16 @@ mod types;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use console::Style;
-use cskburn::{EraseTarget, Family, ProbeTarget, Source};
+use cskburn::{EraseTarget, Family, Image, ProbeTarget, Region, Source};
 use dialoguer::Select;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, trace};
 use serialport::available_ports;
-use std::{borrow::Cow, fmt::Display, fs::File, io::Cursor, time::Duration};
-use types::{FileSpec, Md5, RegionSpec};
+use std::{
+    borrow::Cow, fmt::Display, fs::File, io::Cursor, num::ParseIntError, str::FromStr,
+    time::Duration,
+};
+use types::{FileSpec, Md5};
 
 /// Number of times to attempt to reset the device when probing before giving up.
 /// In each attempt, a series of SYNC commands will be issued.
@@ -98,7 +101,7 @@ struct EraseArgs {
     /// SIZE - The size of the region to erase, can be in either decimal (e.g.
     ///       1048576) or hexadecimal (e.g. 0x100000).
     #[arg(value_name = "ADDR:SIZE", required = true, verbatim_doc_comment)]
-    regions: Vec<RegionSpec>,
+    regions: Vec<Region>,
 }
 
 #[derive(Args, Debug)]
@@ -110,7 +113,47 @@ struct VerifyArgs {
     /// SIZE - The size of the region to erase, can be in either decimal (e.g.
     ///       1048576) or hexadecimal (e.g. 0x100000).
     #[arg(value_name = "ADDR:SIZE", required = true, verbatim_doc_comment)]
-    regions: Vec<RegionSpec>,
+    regions: Vec<Region>,
+}
+
+pub fn parse_addr(s: &str) -> Result<u32, ParseIntError> {
+    if s.starts_with("0x") {
+        u32::from_str_radix(&s[2..], 16)
+    } else {
+        s.parse()
+    }
+}
+
+impl FromStr for Region {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let parts: Vec<&str> = s.split(':').collect();
+        if parts.len() != 2 {
+            return Err("Invalid number of parts");
+        }
+
+        let addr = parse_addr(parts[0]).map_err(|_| "Invalid addr format")?;
+        let size = parse_addr(parts[1]).map_err(|_| "Invalid size format")?;
+
+        Ok(Self { addr, size })
+    }
+}
+
+impl FromStr for FileSpec {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let parts: Vec<&str> = s.split(':').collect();
+        if parts.len() != 2 {
+            return Err("Invalid number of parts");
+        }
+
+        let addr = parse_addr(parts[0]).map_err(|_| "Invalid addr format")?;
+        let path = parts[1].to_string();
+
+        Ok(Self { addr, path })
+    }
 }
 
 fn main() {
@@ -135,7 +178,7 @@ fn main() {
 
     let chip: Family = cli.chip.try_into().unwrap();
 
-    let mut burner: Box<dyn Source> = if let Some(path) = cli.burner {
+    let burner: Box<dyn Source> = if let Some(path) = cli.burner {
         Box::new(File::open(path).expect("Failed to read burner image"))
     } else {
         Box::new(Cursor::new(chip.burner()))
@@ -191,8 +234,7 @@ fn main() {
 
     cskburn
         .memory_write(
-            0,
-            &mut *burner,
+            &mut Image::new(0, burner),
             None,
             Some(&mut |written: usize, _: usize| progress.set_position(written as u64)),
         )
@@ -229,25 +271,21 @@ fn main() {
                 .files
                 .into_iter()
                 .map(|spec| {
-                    let file = spec.as_source().expect("Failed to open file");
-                    let size = file.size().expect("Failed to get file size");
-                    (spec, file, size)
+                    let source = Image::try_from(spec.clone()).expect("Failed to open file");
+                    let size = source.size().expect("Failed to get file size");
+                    (spec, source, size)
                 })
                 .collect::<Vec<_>>();
 
             let count = files.len();
-            for (i, (spec, mut file, size)) in files.into_iter().enumerate() {
-                print_line(
-                    format!("{}/{}", i + 1, count),
-                    format!("0x{:08x}:{}", spec.addr, spec.path),
-                );
+            for (i, (file, mut source, size)) in files.into_iter().enumerate() {
+                print_line(format!("{}/{}", i + 1, count), format!("{}", file));
 
                 let progress = print_progress("Writing", size);
 
                 cskburn
                     .flash_write(
-                        spec.addr,
-                        &mut *file,
+                        &mut source,
                         Some(&mut |written: usize, _: usize| progress.set_position(written as u64)),
                     )
                     .expect("Failed to write file");
@@ -262,9 +300,9 @@ fn main() {
                 if args.verify_all {
                     let progress = print_spinner("Verifying");
 
-                    let expect_md5 = Md5(spec.md5().expect("Failed to calculate file MD5"));
+                    let expect_md5 = Md5(file.md5().expect("Failed to calculate file MD5"));
                     let actual_md5 = Md5(cskburn
-                        .flash_verify(spec.addr, size as u32)
+                        .flash_verify(source.try_into().unwrap())
                         .expect("Failed to verify file"));
 
                     debug!("expect: {:02x?}", expect_md5);
@@ -285,10 +323,7 @@ fn main() {
         Commands::Erase(args) => {
             for spec in args.regions {
                 cskburn
-                    .flash_erase(EraseTarget::Region {
-                        offset: spec.addr,
-                        size: spec.size,
-                    })
+                    .flash_erase(EraseTarget::Region(spec))
                     .expect("Failed to erase flash region");
             }
         }
@@ -300,7 +335,7 @@ fn main() {
         Commands::Verify(args) => {
             for spec in args.regions {
                 let md5 = cskburn
-                    .flash_verify(spec.addr, spec.size)
+                    .flash_verify(spec)
                     .expect("Failed to verify flash region");
                 println!("{:02x?}", md5);
             }

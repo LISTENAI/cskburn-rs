@@ -7,8 +7,8 @@ pub enum Family {
 impl Family {
     pub fn burner(&self) -> Vec<u8> {
         match self {
-            Family::CSK4 => include_bytes!("./burners/burner_4.bin").to_vec(),
-            Family::CSK6 => include_bytes!("./burners/burner_6.bin").to_vec(),
+            Family::CSK4 => include_bytes!("../burners/burner_4.bin").to_vec(),
+            Family::CSK6 => include_bytes!("../burners/burner_6.bin").to_vec(),
         }
     }
 
