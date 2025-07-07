@@ -1,5 +1,5 @@
 use super::{requests::ResponseEnvelope, utils};
-use binrw::{binread, binrw, binwrite, BinRead, BinWrite};
+use binrw::{BinRead, BinWrite, binread, binrw, binwrite};
 use std::{
     fmt::{self, Debug},
     io::{self, Cursor},

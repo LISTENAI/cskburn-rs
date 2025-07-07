@@ -1,0 +1,26 @@
+[package]
+name = "cskburn-cli"
+version = "2.0.0-alpha.0"
+description = "CLI tool for programming LISTENAI CSK series chips"
+
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "cskburn"
+path = "src/main.rs"
+
+[dependencies]
+cskburn = { workspace = true }
+anyhow = "1.0.98"
+clap = { version = "4.5.4", features = ["derive"] }
+console = "0.15.8"
+dialoguer = "0.11.0"
+env_logger = "0.11.3"
+indicatif = "0.17.8"
+log = { workspace = true }
+md5 = "0.7.0"
+serialport = { workspace = true }

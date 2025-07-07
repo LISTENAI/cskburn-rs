@@ -1,23 +1,15 @@
-[package]
-name = "cskburn"
-version = "2.0.0"
-authors = ["xychen <xychen@listenai.com>"]
-edition = "2024"
-description = "A programming utility for LISTENAI CSK series chips."
-repository = "https://github.com/LISTENAI/cskburn-rs"
-license = "Apache-2.0"
-publish = false
+[workspace]
+members = ["crates/*"]
+resolver = "3"
 
-[dependencies]
-anyhow = "1.0.98"
-binrw = "0.14.0"
-clap = { version = "4.5.4", features = ["derive"] }
-console = "0.15.8"
-dialoguer = "0.11.0"
-env_logger = "0.11.3"
-indicatif = "0.17.8"
+[workspace.dependencies]
+cskburn = { path = "./crates/cskburn" }
 log = "0.4.21"
-md5 = "0.7.0"
 serialport = "4.3.0"
-slip-codec = "0.4.0"
-thiserror = "1.0.62"
+
+[workspace.package]
+edition = "2024"
+authors = ["xychen <xychen@listenai.com>"]
+license = "Apache-2.0"
+repository = "https://github.com/LISTENAI/cskburn-rs"
+publish = false

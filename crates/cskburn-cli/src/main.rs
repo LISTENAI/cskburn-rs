@@ -1,7 +1,7 @@
-mod cskburn;
+mod md5;
 mod types;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use console::Style;
 use cskburn::{EraseTarget, Family, Image, ProbeTarget, Region, Source};
@@ -9,11 +9,10 @@ use dialoguer::Select;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, trace};
 use serialport::available_ports;
-use std::{
-    borrow::Cow, fmt::Display, fs::File, io::Cursor, num::ParseIntError, str::FromStr,
-    time::Duration,
-};
-use types::{FileSpec, Md5};
+use std::{borrow::Cow, fmt::Display, fs::File, io::Cursor, time::Duration};
+
+use crate::md5::Md5;
+use crate::types::{FileSpec, RegionSpec};
 
 /// Number of times to attempt to reset the device when probing before giving up.
 /// In each attempt, a series of SYNC commands will be issued.
@@ -102,7 +101,7 @@ struct EraseArgs {
     /// SIZE - The size of the region to erase, can be in either decimal (e.g.
     ///       1048576) or hexadecimal (e.g. 0x100000).
     #[arg(value_name = "ADDR:SIZE", required = true, verbatim_doc_comment)]
-    regions: Vec<Region>,
+    regions: Vec<RegionSpec>,
 }
 
 #[derive(Args, Debug)]
@@ -114,47 +113,7 @@ struct VerifyArgs {
     /// SIZE - The size of the region to erase, can be in either decimal (e.g.
     ///       1048576) or hexadecimal (e.g. 0x100000).
     #[arg(value_name = "ADDR:SIZE", required = true, verbatim_doc_comment)]
-    regions: Vec<Region>,
-}
-
-pub fn parse_addr(s: &str) -> Result<u32, ParseIntError> {
-    if s.starts_with("0x") {
-        u32::from_str_radix(&s[2..], 16)
-    } else {
-        s.parse()
-    }
-}
-
-impl FromStr for Region {
-    type Err = &'static str;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let parts: Vec<&str> = s.split(':').collect();
-        if parts.len() != 2 {
-            return Err("Invalid number of parts");
-        }
-
-        let addr = parse_addr(parts[0]).map_err(|_| "Invalid addr format")?;
-        let size = parse_addr(parts[1]).map_err(|_| "Invalid size format")?;
-
-        Ok(Self { addr, size })
-    }
-}
-
-impl FromStr for FileSpec {
-    type Err = &'static str;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let parts: Vec<&str> = s.split(':').collect();
-        if parts.len() != 2 {
-            return Err("Invalid number of parts");
-        }
-
-        let addr = parse_addr(parts[0]).map_err(|_| "Invalid addr format")?;
-        let path = parts[1].to_string();
-
-        Ok(Self { addr, path })
-    }
+    regions: Vec<RegionSpec>,
 }
 
 fn main() -> Result<()> {
@@ -340,7 +299,7 @@ fn main() -> Result<()> {
         Commands::Erase(args) => {
             for spec in args.regions {
                 cskburn
-                    .flash_erase(EraseTarget::Region(spec))
+                    .flash_erase(EraseTarget::Region(spec.into()))
                     .map_err(|e| anyhow!("Failed to erase flash region: {}", e))?;
             }
         }
@@ -350,7 +309,7 @@ fn main() -> Result<()> {
         Commands::Verify(args) => {
             for spec in args.regions {
                 let md5 = cskburn
-                    .flash_verify(spec)
+                    .flash_verify(spec.into())
                     .map_err(|e| anyhow!("Failed to verify flash region: {}", e))?;
                 println!("{:02x?}", md5);
             }

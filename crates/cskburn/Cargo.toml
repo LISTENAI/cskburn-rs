@@ -1,0 +1,17 @@
+[package]
+name = "cskburn"
+version = "2.0.0-alpha.0"
+description = "Core library for programming LISTENAI CSK series chips"
+
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+binrw = "0.14.0"
+log = { workspace = true }
+serialport = { workspace = true }
+slip-codec = "0.4.0"
+thiserror = "1.0.62"

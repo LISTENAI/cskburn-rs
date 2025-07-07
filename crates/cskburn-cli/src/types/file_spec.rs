@@ -1,10 +1,13 @@
-use crate::cskburn::Image;
-
-use core::fmt;
 use std::{
     fs::File,
     io::{self, Read},
+    str::FromStr,
 };
+
+use core::fmt;
+use cskburn::Image;
+
+use crate::types::utils;
 
 #[derive(Clone, Debug)]
 pub struct FileSpec {
@@ -31,6 +34,22 @@ impl FileSpec {
             context.consume(&buf[..count]);
         }
         Ok(context.compute().0)
+    }
+}
+
+impl FromStr for FileSpec {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let parts: Vec<&str> = s.split(':').collect();
+        if parts.len() != 2 {
+            return Err("Invalid number of parts");
+        }
+
+        let addr = utils::parse_addr(parts[0]).map_err(|_| "Invalid addr format")?;
+        let path = parts[1].to_string();
+
+        Ok(Self { addr, path })
     }
 }
 
