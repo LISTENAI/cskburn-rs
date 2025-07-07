@@ -24,3 +24,14 @@ impl TryFrom<Image> for Region {
         })
     }
 }
+
+impl TryFrom<&Image> for Region {
+    type Error = io::Error;
+
+    fn try_from(spec: &Image) -> Result<Self, Self::Error> {
+        Ok(Region {
+            addr: spec.addr,
+            size: spec.size()? as u32,
+        })
+    }
+}

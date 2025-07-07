@@ -2,13 +2,14 @@
 name = "cskburn"
 version = "2.0.0"
 authors = ["xychen <xychen@listenai.com>"]
-edition = "2021"
+edition = "2024"
 description = "A programming utility for LISTENAI CSK series chips."
 repository = "https://github.com/LISTENAI/cskburn-rs"
 license = "Apache-2.0"
 publish = false
 
 [dependencies]
+anyhow = "1.0.98"
 binrw = "0.14.0"
 clap = { version = "4.5.4", features = ["derive"] }
 console = "0.15.8"

@@ -1,6 +1,7 @@
 mod cskburn;
 mod types;
 
+use anyhow::{anyhow, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use console::Style;
 use cskburn::{EraseTarget, Family, Image, ProbeTarget, Region, Source};
@@ -156,7 +157,7 @@ impl FromStr for FileSpec {
     }
 }
 
-fn main() {
+fn main() -> Result<()> {
     env_logger::init();
 
     // Parse command line arguments
@@ -164,31 +165,27 @@ fn main() {
     let cli = Cli::parse();
     trace!("{:?}", cli);
 
-    let path = if cli.port.is_none() {
-        match choose_port() {
-            Ok(p) => p,
-            Err(e) => {
-                eprintln!("ERROR: {}", e);
-                std::process::exit(1);
-            }
-        }
-    } else {
-        cli.port.unwrap()
-    };
+    let path = cli.port.map(Ok).unwrap_or_else(|| choose_port())?;
 
-    let chip: Family = cli.chip.try_into().unwrap();
+    let chip: Family = cli
+        .chip
+        .try_into()
+        .map_err(|_| anyhow!("Invalid chip family: {}", cli.chip))?;
 
-    let burner: Box<dyn Source> = if let Some(path) = cli.burner {
-        Box::new(File::open(path).expect("Failed to read burner image"))
-    } else {
-        Box::new(Cursor::new(chip.burner()))
-    };
+    let burner: Box<dyn Source> = cli.burner.map_or_else(
+        || Ok(Box::new(Cursor::new(chip.burner())) as Box<dyn Source>),
+        |path| {
+            File::open(path)
+                .map(|f| Box::new(f) as Box<dyn Source>)
+                .map_err(|e| anyhow!("Failed to open burner image file: {}", e))
+        },
+    )?;
 
     // Create and open the device
 
     let mut cskburn = cskburn::new(path, cli.baud, chip)
         .open()
-        .expect("Failed to open device");
+        .map_err(|e| anyhow!("Failed to open device: {}", e))?;
 
     // Probe the device
 
@@ -208,7 +205,7 @@ fn main() {
 
             cskburn
                 .reset(true, Some(RESET_INTERVAL))
-                .expect("Failed to reset device");
+                .map_err(|e| anyhow!("Failed to reset device: {}", e))?;
 
             if cskburn
                 .probe(ProbeTarget::ROM, Some(PROBE_SYNC_ATTEMPTS))
@@ -221,8 +218,7 @@ fn main() {
 
         if !success {
             progress.finish_and_clear();
-            println!("ERROR: Failed to detect device after multiple attempts");
-            return;
+            return Err(anyhow!("Failed to detect device after multiple attempts"));
         }
     }
 
@@ -230,7 +226,11 @@ fn main() {
 
     // Enter burner mode
 
-    let progress = print_progress("Entering", burner.size().unwrap());
+    let burner_size = burner
+        .size()
+        .map_err(|e| anyhow!("Failed to get burner size: {}", e))?;
+
+    let progress = print_progress("Entering", burner_size);
 
     cskburn
         .memory_write(
@@ -238,20 +238,24 @@ fn main() {
             None,
             Some(&mut |written: usize, _: usize| progress.set_position(written as u64)),
         )
-        .expect("Failed to write burner image");
+        .map_err(|e| anyhow!("Failed to write burner image: {}", e))?;
 
     cskburn
         .probe(ProbeTarget::Burner, Some(PROBE_SYNC_ATTEMPTS))
-        .expect("Failed entering burner mode");
+        .map_err(|e| anyhow!("Failed entering burner mode: {}", e))?;
 
     progress.finish_and_clear();
 
     // Read chip and flash info
 
-    let chip_id = cskburn.chip_id().expect("Failed to read chip ID");
+    let chip_id = cskburn
+        .chip_id()
+        .map_err(|e| anyhow!("Failed to read chip ID: {}", e))?;
     print_line("chip-id", format!("{}", chip_id));
 
-    let flash_id = cskburn.flash_info().expect("Failed to read flash ID");
+    let flash_id = cskburn
+        .flash_info()
+        .map_err(|e| anyhow!("Failed to read flash ID: {}", e))?;
     print_line(
         "flash-id",
         format!("{} ({} MiB)", flash_id, flash_id.size() / 1024 / 1024),
@@ -264,52 +268,65 @@ fn main() {
             if args.erase_all {
                 cskburn
                     .flash_erase(EraseTarget::Entire)
-                    .expect("Failed to erase flash");
+                    .map_err(|e| anyhow!("Failed to erase flash: {}", e))?;
             }
 
             let files = args
                 .files
                 .into_iter()
                 .map(|spec| {
-                    let source = Image::try_from(spec.clone()).expect("Failed to open file");
-                    let size = source.size().expect("Failed to get file size");
-                    (spec, source, size)
+                    let source = Image::try_from(spec.clone())
+                        .map_err(|e| anyhow!("Failed to open file: {}", e))?;
+                    let region = Region::try_from(&source)
+                        .map_err(|e| anyhow!("Failed to create region from file: {}", e))?;
+                    Ok((spec, source, region))
                 })
-                .collect::<Vec<_>>();
+                .collect::<Result<Vec<(FileSpec, Image, Region)>>>()?;
 
             let count = files.len();
-            for (i, (file, mut source, size)) in files.into_iter().enumerate() {
+            for (i, (file, mut source, region)) in files.into_iter().enumerate() {
                 print_line(format!("{}/{}", i + 1, count), format!("{}", file));
 
-                let progress = print_progress("Writing", size);
+                let progress = print_progress("Writing", region.size as usize);
 
                 cskburn
                     .flash_write(
                         &mut source,
                         Some(&mut |written: usize, _: usize| progress.set_position(written as u64)),
                     )
-                    .expect("Failed to write file");
+                    .map_err(|e| anyhow!("Failed to write file: {}", e))?;
 
                 progress.finish_and_clear();
 
                 print_step(
                     "Wrote",
-                    format!("{} bytes, took {}s", size, progress.elapsed().as_secs()),
+                    format!(
+                        "{} bytes, took {}s",
+                        region.size,
+                        progress.elapsed().as_secs()
+                    ),
                 );
 
                 if args.verify_all {
                     let progress = print_spinner("Verifying");
 
-                    let expect_md5 = Md5(file.md5().expect("Failed to calculate file MD5"));
+                    let expect_md5 = Md5(file
+                        .md5()
+                        .map_err(|e| anyhow!("Failed to calculate file MD5: {}", e))?);
                     let actual_md5 = Md5(cskburn
-                        .flash_verify(source.try_into().unwrap())
-                        .expect("Failed to verify file"));
+                        .flash_verify(region)
+                        .map_err(|e| anyhow!("Failed to verify file: {}", e))?);
 
                     debug!("expect: {:02x?}", expect_md5);
                     debug!("actual: {:02x?}", actual_md5);
 
                     if expect_md5 != actual_md5 {
-                        panic!("File verification failed");
+                        progress.finish_and_clear();
+                        return Err(anyhow!(
+                            "File verification failed: expected {:02x?}, got {:02x?}",
+                            expect_md5,
+                            actual_md5
+                        ));
                     }
 
                     progress.finish_and_clear();
@@ -324,28 +341,28 @@ fn main() {
             for spec in args.regions {
                 cskburn
                     .flash_erase(EraseTarget::Region(spec))
-                    .expect("Failed to erase flash region");
+                    .map_err(|e| anyhow!("Failed to erase flash region: {}", e))?;
             }
         }
-        Commands::EraseAll => {
-            cskburn
-                .flash_erase(EraseTarget::Entire)
-                .expect("Failed to erase flash");
-        }
+        Commands::EraseAll => cskburn
+            .flash_erase(EraseTarget::Entire)
+            .map_err(|e| anyhow!("Failed to erase flash: {}", e))?,
         Commands::Verify(args) => {
             for spec in args.regions {
                 let md5 = cskburn
                     .flash_verify(spec)
-                    .expect("Failed to verify flash region");
+                    .map_err(|e| anyhow!("Failed to verify flash region: {}", e))?;
                 println!("{:02x?}", md5);
             }
         }
     }
+
+    Ok(())
 }
 
-fn choose_port() -> Result<String, &'static str> {
+fn choose_port() -> Result<String> {
     let ports: Vec<String> = available_ports()
-        .map_err(|_| "Failed to list serial ports")?
+        .map_err(|e| anyhow!("Failed to list serial ports: {}", e))?
         .into_iter()
         .map(|p| p.port_name)
         .filter(|p| {
@@ -360,7 +377,7 @@ fn choose_port() -> Result<String, &'static str> {
         .collect();
 
     if ports.is_empty() {
-        return Err("No serial ports found");
+        return Err(anyhow!("No serial ports found"));
     }
 
     let choice = Select::new()
@@ -368,7 +385,7 @@ fn choose_port() -> Result<String, &'static str> {
         .default(0)
         .items(&ports)
         .interact()
-        .map_err(|_| "Failed to get port choice")?;
+        .map_err(|e| anyhow!("Failed to get port choice: {}", e))?;
 
     Ok(ports[choice].clone())
 }
