@@ -4,11 +4,10 @@ mod types;
 use anyhow::{Result, anyhow};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use console::Style;
-use cskburn::{EraseTarget, Family, Image, ProbeTarget, Region, Source};
+use cskburn::{EraseTarget, Family, Image, ProbeTarget, Region, Source, list_ports};
 use dialoguer::Select;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, trace};
-use serialport::available_ports;
 use std::{borrow::Cow, fmt::Display, fs::File, io::Cursor, time::Duration};
 
 use crate::md5::Md5;
@@ -320,20 +319,8 @@ fn main() -> Result<()> {
 }
 
 fn choose_port() -> Result<String> {
-    let ports: Vec<String> = available_ports()
-        .map_err(|e| anyhow!("Failed to list serial ports: {}", e))?
-        .into_iter()
-        .map(|p| p.port_name)
-        .filter(|p| {
-            if cfg!(target_os = "linux") {
-                p.starts_with("/dev/ttyUSB") || p.starts_with("/dev/ttyACM")
-            } else if cfg!(target_os = "macos") {
-                p.starts_with("/dev/cu.usb")
-            } else {
-                true
-            }
-        })
-        .collect();
+    let ports: Vec<String> =
+        list_ports().map_err(|e| anyhow!("Failed to list serial ports: {}", e))?;
 
     if ports.is_empty() {
         return Err(anyhow!("No serial ports found"));

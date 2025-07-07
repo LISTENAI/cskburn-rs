@@ -28,6 +28,27 @@ pub struct CSKBurnBuilder {
     chip: Family,
 }
 
+pub fn list_ports() -> Result<Vec<String>> {
+    serialport::available_ports()
+        .map_err(Error::from)
+        .map(|ports| {
+            ports
+                .into_iter()
+                .filter_map(|port| {
+                    if cfg!(target_os = "macos") && !port.port_name.starts_with("/dev/cu.") {
+                        return None;
+                    }
+
+                    if let serialport::SerialPortType::UsbPort(_) = port.port_type {
+                        Some(port.port_name)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        })
+}
+
 pub fn new(path: String, baud: u32, chip: Family) -> CSKBurnBuilder {
     CSKBurnBuilder { path, baud, chip }
 }

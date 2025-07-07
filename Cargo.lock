@@ -226,7 +226,6 @@ dependencies = [
  "indicatif",
  "log",
  "md5",
- "serialport",
 ]
 
 [[package]]
