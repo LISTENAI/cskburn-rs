@@ -92,7 +92,7 @@ impl CSKBurn {
         self.sync(attempts)?;
 
         if self.baud != BAUD_RATE_DEFAULT && self.chip.rom_supports_change_baudrate() {
-            self.command(Request::ChangeBaudrate {
+            let _: () = self.command(Request::ChangeBaudrate {
                 to: self.baud,
                 from: BAUD_RATE_DEFAULT,
             })?;
@@ -139,7 +139,7 @@ impl CSKBurn {
             size, blocks
         );
 
-        self.command(Request::MemoryBegin {
+        let _: () = self.command(Request::MemoryBegin {
             size: size as u32,
             blocks: blocks as u32,
             block_size: MEMORY_BLOCK_SIZE as u32,
@@ -154,7 +154,7 @@ impl CSKBurn {
                 break;
             }
 
-            self.command(Request::MemoryData {
+            let _: () = self.command(Request::MemoryData {
                 seq,
                 data: buf[..read].to_vec(),
             })?;
@@ -165,7 +165,7 @@ impl CSKBurn {
             }
         }
 
-        self.command(Request::MemoryEnd {
+        let _: () = self.command(Request::MemoryEnd {
             action: action.unwrap_or(MemoryAction::Boot()),
         })?;
 
@@ -187,7 +187,7 @@ impl CSKBurn {
             size, blocks
         );
 
-        self.command(Request::FlashBegin {
+        let _: () = self.command(Request::FlashBegin {
             size: size as u32,
             blocks: blocks as u32,
             block_size: FLASH_BLOCK_SIZE as u32,
@@ -202,7 +202,7 @@ impl CSKBurn {
                 break;
             }
 
-            self.command(Request::FlashData {
+            let _: () = self.command(Request::FlashData {
                 seq,
                 data: buf[..read].to_vec(),
             })?;
@@ -213,7 +213,7 @@ impl CSKBurn {
             }
         }
 
-        self.command(Request::FlashEnd {})?;
+        let _: () = self.command(Request::FlashEnd {})?;
 
         Ok(size)
     }
