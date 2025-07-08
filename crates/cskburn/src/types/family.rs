@@ -6,6 +6,7 @@ use crate::Image;
 pub enum Family {
     CSK4,
     CSK6,
+    MARS,
 }
 
 impl Family {
@@ -19,6 +20,10 @@ impl Family {
                 0x0000_0000,
                 Box::new(Cursor::new(include_bytes!("../burners/burner_6.bin"))),
             ),
+            Family::MARS => Image::new(
+                0x0001_0000,
+                Box::new(Cursor::new(include_bytes!("../burners/burner_mars.bin"))),
+            ),
         }
     }
 
@@ -26,6 +31,7 @@ impl Family {
         match self {
             Family::CSK4 => false,
             Family::CSK6 => true,
+            Family::MARS => true,
         }
     }
 }
@@ -37,6 +43,7 @@ impl FromStr for Family {
         match value {
             "3" | "4" => Ok(Family::CSK4),
             "6" => Ok(Family::CSK6),
+            "mars" | "MARS" => Ok(Family::MARS),
             _ => Err("Invalid chip family"),
         }
     }

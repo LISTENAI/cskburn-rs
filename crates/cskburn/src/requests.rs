@@ -1,8 +1,8 @@
 use super::{
-    commands::{Command, Request},
     Error, Result,
+    commands::{Command, Request},
 };
-use binrw::{binread, binwrite, BinRead, BinWrite};
+use binrw::{BinRead, BinWrite, binread, binwrite};
 use log::{debug, trace};
 use std::{
     cmp,
@@ -36,6 +36,12 @@ pub struct ResponseEnvelope {
     pub code: u16,
     #[br(count = size - 2)]
     pub data: Vec<u8>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum TransferMode {
+    FullDuplex,
+    HalfDuplex,
 }
 
 impl TryFrom<ResponseEnvelope> for () {
@@ -133,5 +139,27 @@ impl super::CSKBurn {
         }
 
         T::try_from(res).map_err(|_| io::ErrorKind::InvalidData.into())
+    }
+
+    pub fn adaptive_duplex(&mut self) -> Result<TransferMode> {
+        self.port.clear(serialport::ClearBuffer::All)?;
+
+        debug!("detecting transfer mode...");
+
+        self.port.set_timeout(TIMEOUT_WRITE_DEFAULT)?;
+        self.port.write(&[0xFF, 0xF0, 0x00])?;
+        self.port.flush()?;
+
+        self.port.set_timeout(TIMEOUT_READ_DEFAULT)?;
+        let mut res = vec![0; 3];
+        let mode = if self.port.read(&mut res).is_ok() && res == [0xFF, 0xF0, 0x00] {
+            TransferMode::HalfDuplex
+        } else {
+            TransferMode::FullDuplex
+        };
+
+        debug!("detected transfer mode, mode={:?}", mode);
+
+        Ok(mode)
     }
 }

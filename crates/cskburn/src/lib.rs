@@ -14,6 +14,8 @@ use std::{io, thread::sleep, time::Duration};
 pub use error::Error;
 pub use types::{family::Family, image::Image, region::Region, source::Source};
 
+use crate::requests::TransferMode;
+
 type Result<T> = std::result::Result<T, Error>;
 
 const BAUD_RATE_DEFAULT: u32 = 115200;
@@ -93,18 +95,34 @@ impl CSKBurn {
     pub fn reset(&mut self, boot_mode: bool, reset_interval: Option<Duration>) -> Result<()> {
         let reset_interval = reset_interval.unwrap_or(Duration::from_millis(100));
 
-        trace!("set RTS: {}", boot_mode);
-        self.port.write_request_to_send(boot_mode)?;
+        if self.chip == Family::MARS {
+            trace!("set DTR: {}", true);
+            self.port.write_data_terminal_ready(true)?;
 
-        trace!("set DTR: {}", true);
-        self.port.write_data_terminal_ready(true)?;
+            sleep(if boot_mode {
+                Duration::from_secs(2)
+            } else {
+                reset_interval
+            });
 
-        sleep(reset_interval);
+            trace!("set DTR: {}", false);
+            self.port.write_data_terminal_ready(false)?;
 
-        trace!("set DTR: {}", false);
-        self.port.write_data_terminal_ready(false)?;
+            sleep(reset_interval);
+        } else {
+            trace!("set RTS: {}", boot_mode);
+            self.port.write_request_to_send(boot_mode)?;
 
-        sleep(reset_interval);
+            trace!("set DTR: {}", true);
+            self.port.write_data_terminal_ready(true)?;
+
+            sleep(reset_interval);
+
+            trace!("set DTR: {}", false);
+            self.port.write_data_terminal_ready(false)?;
+
+            sleep(reset_interval);
+        }
 
         Ok(())
     }
@@ -113,6 +131,20 @@ impl CSKBurn {
         if target == ProbeTarget::Burner && self.port.baud_rate()? != BAUD_RATE_DEFAULT {
             self.port.clear(serialport::ClearBuffer::All)?;
             self.port.set_baud_rate(BAUD_RATE_DEFAULT)?;
+        }
+
+        if self.chip == Family::MARS {
+            let mode = self.adaptive_duplex()?;
+            debug!("adaptive duplex mode: {:?}", mode);
+
+            if mode == TransferMode::HalfDuplex {
+                return Err(Error::Io(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "Half-duplex mode is not currently support in this version",
+                )));
+            }
+
+            sleep(Duration::from_millis(100));
         }
 
         self.sync(attempts)?;
@@ -146,6 +178,10 @@ impl CSKBurn {
     }
 
     pub fn chip_id(&mut self) -> Result<ChipId> {
+        if self.chip == Family::MARS {
+            return Ok(ChipId::empty());
+        }
+
         self.command(Request::ReadChipId)
     }
 

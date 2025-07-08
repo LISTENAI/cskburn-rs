@@ -104,6 +104,12 @@ impl TryFrom<ResponseEnvelope> for ChipId {
     }
 }
 
+impl ChipId {
+    pub fn empty() -> Self {
+        ChipId([0; 8])
+    }
+}
+
 #[binwrite]
 #[bw(little)]
 #[derive(Debug)]
