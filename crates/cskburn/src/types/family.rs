@@ -1,4 +1,6 @@
-use std::str::FromStr;
+use std::{io::Cursor, str::FromStr};
+
+use crate::Image;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Family {
@@ -7,10 +9,16 @@ pub enum Family {
 }
 
 impl Family {
-    pub fn burner(&self) -> Vec<u8> {
+    pub fn burner(&self) -> Image {
         match self {
-            Family::CSK4 => include_bytes!("../burners/burner_4.bin").to_vec(),
-            Family::CSK6 => include_bytes!("../burners/burner_6.bin").to_vec(),
+            Family::CSK4 => Image::new(
+                0x0000_0000,
+                Box::new(Cursor::new(include_bytes!("../burners/burner_4.bin"))),
+            ),
+            Family::CSK6 => Image::new(
+                0x0000_0000,
+                Box::new(Cursor::new(include_bytes!("../burners/burner_6.bin"))),
+            ),
         }
     }
 

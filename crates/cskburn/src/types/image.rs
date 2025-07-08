@@ -1,5 +1,6 @@
+use std::{fs::File, io};
+
 use super::source::Source;
-use std::io;
 
 pub struct Image {
     pub addr: u32,
@@ -13,5 +14,12 @@ impl Image {
 
     pub fn size(&self) -> io::Result<usize> {
         self.source.size()
+    }
+
+    pub fn try_from_file(addr: u32, path: &str) -> io::Result<Self> {
+        Ok(Image {
+            addr,
+            source: Box::new(File::open(path)?) as Box<dyn Source>,
+        })
     }
 }

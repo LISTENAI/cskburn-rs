@@ -1,4 +1,4 @@
-use std::{borrow::Cow, fmt::Display, fs::File, io::Cursor, str::FromStr, time::Duration};
+use std::{borrow::Cow, fmt::Display, str::FromStr, time::Duration};
 
 mod md5;
 mod types;
@@ -6,7 +6,7 @@ mod types;
 use anyhow::{Result, anyhow};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use console::Style;
-use cskburn::{EraseTarget, Family, Image, ProbeTarget, Region, Source, list_ports};
+use cskburn::{EraseTarget, Family, Image, ProbeTarget, Region, list_ports};
 use dialoguer::Select;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, trace};
@@ -129,11 +129,10 @@ fn main() -> Result<()> {
     let chip =
         Family::from_str(&cli.chip).map_err(|_| anyhow!("Invalid chip family: {}", cli.chip))?;
 
-    let burner: Box<dyn Source> = cli.burner.map_or_else(
-        || Ok(Box::new(Cursor::new(chip.burner())) as Box<dyn Source>),
+    let mut burner = cli.burner.map_or_else(
+        || Ok(chip.burner()),
         |path| {
-            File::open(path)
-                .map(|f| Box::new(f) as Box<dyn Source>)
+            Image::try_from_file(0, &path)
                 .map_err(|e| anyhow!("Failed to open burner image file: {}", e))
         },
     )?;
@@ -191,7 +190,7 @@ fn main() -> Result<()> {
 
     cskburn
         .memory_write(
-            &mut Image::new(0, burner),
+            &mut burner,
             None,
             Some(&mut |written: usize, _: usize| progress.set_position(written as u64)),
         )

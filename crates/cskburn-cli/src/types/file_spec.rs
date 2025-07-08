@@ -57,9 +57,6 @@ impl TryFrom<FileSpec> for Image {
     type Error = io::Error;
 
     fn try_from(spec: FileSpec) -> Result<Self, Self::Error> {
-        Ok(Image {
-            addr: spec.addr,
-            source: Box::new(File::open(&spec.path)?),
-        })
+        Image::try_from_file(spec.addr, spec.path.as_str())
     }
 }
