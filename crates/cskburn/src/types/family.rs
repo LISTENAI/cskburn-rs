@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Family {
     CSK4,
@@ -20,13 +22,13 @@ impl Family {
     }
 }
 
-impl TryFrom<u8> for Family {
-    type Error = &'static str;
+impl FromStr for Family {
+    type Err = &'static str;
 
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
-            3 | 4 => Ok(Family::CSK4),
-            6 => Ok(Family::CSK6),
+            "3" | "4" => Ok(Family::CSK4),
+            "6" => Ok(Family::CSK6),
             _ => Err("Invalid chip family"),
         }
     }

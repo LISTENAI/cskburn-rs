@@ -1,3 +1,5 @@
+use std::{borrow::Cow, fmt::Display, fs::File, io::Cursor, str::FromStr, time::Duration};
+
 mod md5;
 mod types;
 
@@ -8,7 +10,6 @@ use cskburn::{EraseTarget, Family, Image, ProbeTarget, Region, Source, list_port
 use dialoguer::Select;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, trace};
-use std::{borrow::Cow, fmt::Display, fs::File, io::Cursor, time::Duration};
 
 use crate::md5::Md5;
 use crate::types::{FileSpec, RegionSpec};
@@ -37,7 +38,7 @@ struct Cli {
 
     /// Chip family [possible values: 3, 4, 6]
     #[arg(short = 'C', long, default_value = "6")]
-    chip: u8,
+    chip: String,
 
     /// Path to burner image to use, omit to use built-in
     burner: Option<String>,
@@ -125,10 +126,8 @@ fn main() -> Result<()> {
 
     let path = cli.port.map(Ok).unwrap_or_else(|| choose_port())?;
 
-    let chip: Family = cli
-        .chip
-        .try_into()
-        .map_err(|_| anyhow!("Invalid chip family: {}", cli.chip))?;
+    let chip =
+        Family::from_str(&cli.chip).map_err(|_| anyhow!("Invalid chip family: {}", cli.chip))?;
 
     let burner: Box<dyn Source> = cli.burner.map_or_else(
         || Ok(Box::new(Cursor::new(chip.burner())) as Box<dyn Source>),
