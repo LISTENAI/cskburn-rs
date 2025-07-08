@@ -33,7 +33,7 @@ struct Cli {
     port: Option<String>,
 
     /// Baud rate
-    #[arg(short, long, default_value = "748800")]
+    #[arg(short, long, default_value = "1500000")]
     baud: u32,
 
     /// Chip family [possible values: 3, 4, 6]
