@@ -90,16 +90,20 @@ pub enum EraseTarget {
 
 impl CSKBurn {
     pub fn reset(&mut self, boot_mode: bool, reset_interval: Option<Duration>) -> Result<()> {
+        let reset_interval = reset_interval.unwrap_or(Duration::from_millis(100));
+
         trace!("set RTS: {}", boot_mode);
         self.port.write_request_to_send(boot_mode)?;
 
         trace!("set DTR: {}", true);
         self.port.write_data_terminal_ready(true)?;
 
-        sleep(reset_interval.unwrap_or(Duration::from_millis(100)));
+        sleep(reset_interval);
 
         trace!("set DTR: {}", false);
         self.port.write_data_terminal_ready(false)?;
+
+        sleep(reset_interval);
 
         Ok(())
     }

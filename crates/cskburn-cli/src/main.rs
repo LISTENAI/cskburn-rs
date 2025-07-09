@@ -313,6 +313,12 @@ fn main() -> Result<()> {
         }
     }
 
+    // Reset the device to exit burner mode
+
+    cskburn
+        .reset(false, Some(RESET_INTERVAL))
+        .map_err(|e| anyhow!("Failed to reset device: {}", e))?;
+
     Ok(())
 }
 
