@@ -147,38 +147,33 @@ fn main() -> Result<()> {
 
     let progress = print_spinner("Probing");
 
-    if !cskburn.probe(ProbeTarget::ROM, None).is_ok() {
-        let mut success = false;
-
-        for attempts in 0..PROBE_RESET_ATTEMPTS {
-            if attempts > 0 {
-                progress.set_prefix(format!(
-                    "reset attempt {}/{}",
-                    attempts + 1,
-                    PROBE_RESET_ATTEMPTS
-                ));
-            }
-
-            cskburn
-                .reset(true, Some(RESET_INTERVAL))
-                .map_err(|e| anyhow!("Failed to reset device: {}", e))?;
-
-            if cskburn
-                .probe(ProbeTarget::ROM, Some(PROBE_SYNC_ATTEMPTS))
-                .is_ok()
-            {
-                success = true;
-                break;
-            }
+    let mut success = false;
+    for attempts in 0..PROBE_RESET_ATTEMPTS {
+        if attempts > 0 {
+            progress.set_prefix(format!(
+                "reset attempt {}/{}",
+                attempts + 1,
+                PROBE_RESET_ATTEMPTS
+            ));
         }
 
-        if !success {
-            progress.finish_and_clear();
-            return Err(anyhow!("Failed to detect device after multiple attempts"));
+        cskburn
+            .reset(true, Some(RESET_INTERVAL))
+            .map_err(|e| anyhow!("Failed to reset device: {}", e))?;
+
+        if cskburn
+            .probe(ProbeTarget::ROM, Some(PROBE_SYNC_ATTEMPTS))
+            .is_ok()
+        {
+            success = true;
+            break;
         }
     }
 
     progress.finish_and_clear();
+    if !success {
+        return Err(anyhow!("Failed to detect device after multiple attempts"));
+    }
 
     // Enter burner mode
 

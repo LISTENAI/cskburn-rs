@@ -57,6 +57,7 @@ impl CSKBurnBuilder {
     pub fn open(self) -> Result<CSKBurn> {
         let port = serialport::new(self.path, BAUD_RATE_DEFAULT)
             .flow_control(serialport::FlowControl::None)
+            .dtr_on_open(false)
             .open()?;
 
         Ok(CSKBurn {
