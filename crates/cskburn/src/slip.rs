@@ -23,7 +23,7 @@ impl Read for super::CSKBurn {
         match self.slip_dec.decode(&mut self.port, &mut out) {
             Ok(size) => {
                 trace!("rx raw: {} {:02x?}", size, &out);
-                let size = size.min(buf.len());
+                let size = size.min(buf.len()).min(out.len());
                 trace!("rx len: {}", size);
                 buf[..size].copy_from_slice(&out[..size]);
                 return Ok(size);
