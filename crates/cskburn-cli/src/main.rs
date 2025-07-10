@@ -183,13 +183,13 @@ fn main() -> Result<()> {
 
     let progress = print_progress("Entering", burner_size);
 
-    cskburn
-        .memory_write(
-            &mut burner,
-            None,
-            Some(&mut |written: usize, _: usize| progress.set_position(written as u64)),
-        )
-        .map_err(|e| anyhow!("Failed to write burner image: {}", e))?;
+    for step in cskburn
+        .memory_write_iter(&mut burner, None)
+        .map_err(|e| anyhow!("Failed to write burner image: {}", e))?
+    {
+        let step = step.map_err(|e| anyhow!("Failed to write burner image: {}", e))?;
+        progress.set_position(step.bytes_written as u64);
+    }
 
     cskburn
         .probe(ProbeTarget::Burner, Some(PROBE_SYNC_ATTEMPTS))
@@ -240,12 +240,13 @@ fn main() -> Result<()> {
 
                 let progress = print_progress("Writing", region.size as usize);
 
-                cskburn
-                    .flash_write(
-                        &mut source,
-                        Some(&mut |written: usize, _: usize| progress.set_position(written as u64)),
-                    )
-                    .map_err(|e| anyhow!("Failed to write file: {}", e))?;
+                for step in cskburn
+                    .flash_write_iter(&mut source)
+                    .map_err(|e| anyhow!("Failed to write file: {}", e))?
+                {
+                    let step = step.map_err(|e| anyhow!("Failed to write file: {}", e))?;
+                    progress.set_position(step.bytes_written as u64);
+                }
 
                 progress.finish_and_clear();
 

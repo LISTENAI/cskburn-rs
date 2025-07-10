@@ -39,7 +39,7 @@ pub enum Command {
 }
 
 #[binwrite]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub enum MemoryAction {
     #[bw(magic = 0x00u32)]

@@ -4,6 +4,7 @@ mod requests;
 mod slip;
 mod types;
 mod utils;
+mod writers;
 
 use commands::{ChipId, FlashInfo, MemoryAction, Request};
 use log::{debug, trace};
@@ -18,14 +19,14 @@ use std::{
 pub use error::Error;
 pub use types::{family::Family, image::Image, region::Region, source::Source};
 
-use crate::requests::TransferMode;
+use crate::{
+    requests::TransferMode,
+    writers::{FlashWriteIterator, MemoryWriteIterator},
+};
 
-type Result<T> = std::result::Result<T, Error>;
+pub type Result<T> = std::result::Result<T, Error>;
 
 const BAUD_RATE_DEFAULT: u32 = 115200;
-
-const MEMORY_BLOCK_SIZE: usize = 2048;
-const FLASH_BLOCK_SIZE: usize = 4096;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CSKBurnBuilder {
@@ -193,99 +194,41 @@ impl CSKBurn {
         self.command(Request::ReadChipId)
     }
 
-    pub fn memory_write<F>(
+    pub fn memory_write(
         &mut self,
         source: &mut Image,
         action: Option<MemoryAction>,
-        mut on_progress: Option<F>,
-    ) -> Result<usize>
-    where
-        F: FnMut(usize, usize),
-    {
-        let size: usize = source.size()?;
-        let blocks = utils::blocks(size, MEMORY_BLOCK_SIZE);
-        debug!(
-            "begin memory write, total size: {}, blocks: {}",
-            size, blocks
-        );
-
-        let _: () = self.command(Request::MemoryBegin {
-            size: size as u32,
-            blocks: blocks as u32,
-            block_size: MEMORY_BLOCK_SIZE as u32,
-            offset: source.addr,
-        })?;
-
-        let mut buf = vec![0; MEMORY_BLOCK_SIZE];
-        let mut written = 0;
-        for seq in 0..blocks as u32 {
-            let read = source.source.read(&mut buf)?;
-            if read == 0 {
-                break;
-            }
-
-            let _: () = self.command(Request::MemoryData {
-                seq,
-                data: buf[..read].to_vec(),
-            })?;
-
-            written += read;
-            if let Some(ref mut on_progress) = on_progress {
-                on_progress(written, size);
-            }
+    ) -> Result<usize> {
+        let mut total_written = 0;
+        for step in self.memory_write_iter(source, action)? {
+            let step = step?;
+            total_written = step.bytes_written;
         }
-
-        let _: () = self.command(Request::MemoryEnd {
-            action: action.unwrap_or(MemoryAction::Boot()),
-        })?;
-
-        Ok(size)
+        Ok(total_written)
     }
 
-    pub fn flash_write<F>(
-        &mut self,
-        source: &mut Image,
-        mut on_progress: Option<F>,
-    ) -> Result<usize>
-    where
-        F: FnMut(usize, usize),
-    {
-        let size: usize = source.size()?;
-        let blocks = utils::blocks(size, FLASH_BLOCK_SIZE);
-        debug!(
-            "begin flash write, total size: {}, blocks: {}",
-            size, blocks
-        );
+    pub fn memory_write_iter<'a>(
+        &'a mut self,
+        source: &'a mut Image,
+        action: Option<MemoryAction>,
+    ) -> Result<MemoryWriteIterator<'a>> {
+        MemoryWriteIterator::new(self, source, action)
+    }
 
-        let _: () = self.command(Request::FlashBegin {
-            size: size as u32,
-            blocks: blocks as u32,
-            block_size: FLASH_BLOCK_SIZE as u32,
-            offset: source.addr,
-        })?;
-
-        let mut buf = vec![0; FLASH_BLOCK_SIZE];
-        let mut written = 0;
-        for seq in 0..blocks as u32 {
-            let read = source.source.read(&mut buf)?;
-            if read == 0 {
-                break;
-            }
-
-            let _: () = self.command(Request::FlashData {
-                seq,
-                data: buf[..read].to_vec(),
-            })?;
-
-            written += read;
-            if let Some(ref mut on_progress) = on_progress {
-                on_progress(written, size);
-            }
+    pub fn flash_write(&mut self, source: &mut Image) -> Result<usize> {
+        let mut total_written = 0;
+        for step in self.flash_write_iter(source)? {
+            let step = step?;
+            total_written = step.bytes_written;
         }
+        Ok(total_written)
+    }
 
-        let _: () = self.command(Request::FlashEnd {})?;
-
-        Ok(size)
+    pub fn flash_write_iter<'a>(
+        &'a mut self,
+        source: &'a mut Image,
+    ) -> Result<FlashWriteIterator<'a>> {
+        FlashWriteIterator::new(self, source)
     }
 
     pub fn flash_verify(&mut self, region: Region) -> Result<[u8; 16]> {
