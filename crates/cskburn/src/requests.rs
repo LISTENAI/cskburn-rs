@@ -2,7 +2,7 @@ use super::{
     Error, Result,
     commands::{Command, Request},
 };
-use binrw::{BinRead, BinWrite, binread, binwrite};
+use binrw::{BinRead, BinWrite, binread, binwrite, io::NoSeek};
 use log::{debug, trace};
 use std::{
     cmp,
@@ -106,20 +106,18 @@ impl super::CSKBurn {
             req.data.len()
         );
 
-        let mut writer = Cursor::new(Vec::new());
-        req.write(&mut writer)?;
+        self.with_timeout(TIMEOUT_WRITE_DEFAULT, |s| {
+            let mut writer = NoSeek::new(s);
+            req.write(&mut writer)?;
+            writer.flush()?;
+            Ok(())
+        })?;
 
-        self.port.set_timeout(TIMEOUT_WRITE_DEFAULT)?;
-        self.write(writer.get_ref())?;
-
-        self.flush()?;
-
-        let mut reader = vec![0; 1024];
-
-        self.port.set_timeout(read_timeout)?;
-        self.read(&mut reader)?;
-
-        let res = ResponseEnvelope::read(&mut Cursor::new(reader))?;
+        let res = self.with_timeout(read_timeout, |s| {
+            let mut reader = NoSeek::new(s);
+            let res = ResponseEnvelope::read(&mut reader)?;
+            Ok(res)
+        })?;
 
         debug!(
             "res: {:?}, value={}, code={:04x}, size={}",
@@ -146,20 +144,31 @@ impl super::CSKBurn {
 
         debug!("detecting transfer mode...");
 
-        self.port.set_timeout(TIMEOUT_WRITE_DEFAULT)?;
-        self.port.write(&[0xFF, 0xF0, 0x00])?;
-        self.port.flush()?;
+        self.with_timeout(TIMEOUT_WRITE_DEFAULT, |s| {
+            s.port.write(&[0xFF, 0xF0, 0x00])?;
+            s.port.flush()?;
+            Ok(())
+        })?;
 
-        self.port.set_timeout(TIMEOUT_READ_DEFAULT)?;
-        let mut res = vec![0; 3];
-        let mode = if self.port.read(&mut res).is_ok() && res == [0xFF, 0xF0, 0x00] {
-            TransferMode::HalfDuplex
-        } else {
-            TransferMode::FullDuplex
-        };
+        let mode = self.with_timeout(TIMEOUT_READ_DEFAULT, |s| {
+            let mut res = vec![0; 3];
+            if s.port.read(&mut res).is_ok() && res == [0xFF, 0xF0, 0x00] {
+                Ok(TransferMode::HalfDuplex)
+            } else {
+                Ok(TransferMode::FullDuplex)
+            }
+        })?;
 
         debug!("detected transfer mode, mode={:?}", mode);
 
         Ok(mode)
+    }
+
+    fn with_timeout<F, T>(&mut self, timeout: Duration, f: F) -> Result<T>
+    where
+        F: FnOnce(&mut Self) -> Result<T>,
+    {
+        self.port.set_timeout(timeout)?;
+        f(self)
     }
 }

@@ -9,7 +9,11 @@ use commands::{ChipId, FlashInfo, MemoryAction, Request};
 use log::{debug, trace};
 use serialport::SerialPort;
 use slip_codec::{SlipDecoder, SlipEncoder};
-use std::{io, thread::sleep, time::Duration};
+use std::{
+    io::{self, Cursor},
+    thread::sleep,
+    time::Duration,
+};
 
 pub use error::Error;
 pub use types::{family::Family, image::Image, region::Region, source::Source};
@@ -67,7 +71,9 @@ impl CSKBurnBuilder {
             baud: self.baud,
             chip: self.chip,
             slip_enc: SlipEncoder::new(true),
+            slip_enc_buf: Cursor::new(Vec::new()),
             slip_dec: SlipDecoder::new(),
+            slip_dec_buf: Cursor::new(Vec::new()),
         })
     }
 }
@@ -77,7 +83,9 @@ pub struct CSKBurn {
     baud: u32,
     chip: Family,
     slip_enc: SlipEncoder,
+    slip_enc_buf: Cursor<Vec<u8>>,
     slip_dec: SlipDecoder,
+    slip_dec_buf: Cursor<Vec<u8>>,
 }
 
 #[derive(PartialEq)]
