@@ -1,6 +1,6 @@
 [package]
 name = "cskburn-cli"
-version = "2.0.0-alpha.0"
+version = "2.0.0-alpha.1"
 description = "CLI tool for programming LISTENAI CSK series chips"
 
 edition.workspace = true
