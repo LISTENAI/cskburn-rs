@@ -113,7 +113,7 @@ impl ChipId {
 #[binwrite]
 #[bw(little)]
 #[derive(Debug)]
-pub enum Request {
+pub enum Request<'a> {
     FlashBegin {
         size: u32,
         blocks: u32,
@@ -128,7 +128,7 @@ pub enum Request {
         rev1: u32,
         #[bw(calc = 0)]
         rev2: u32,
-        data: Vec<u8>,
+        data: &'a [u8],
     },
     FlashEnd {
         #[bw(calc = 0xFF)]
@@ -151,7 +151,7 @@ pub enum Request {
         rev1: u32,
         #[bw(calc = 0)]
         rev2: u32,
-        data: Vec<u8>,
+        data: &'a [u8],
     },
     Sync(#[bw(calc = SYNC_STUB)] [u8; 36]),
     ChangeBaudrate {
@@ -175,7 +175,7 @@ pub enum Request {
     ReadChipId,
 }
 
-impl Request {
+impl Request<'_> {
     pub fn command(&self) -> Command {
         match self {
             Request::FlashBegin { .. } => Command::FlashBegin,
@@ -218,7 +218,7 @@ impl Request {
     }
 }
 
-impl TryInto<Vec<u8>> for Request {
+impl<'a> TryInto<Vec<u8>> for Request<'a> {
     type Error = io::Error;
 
     fn try_into(self) -> io::Result<Vec<u8>> {

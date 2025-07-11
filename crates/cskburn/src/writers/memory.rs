@@ -30,11 +30,8 @@ impl WriteProtocol for MemoryWriteOperation {
         }
     }
 
-    fn data(&self, seq: u32, data: &[u8]) -> Request {
-        Request::MemoryData {
-            seq,
-            data: data.to_vec(),
-        }
+    fn data<'a>(&self, seq: u32, data: &'a [u8]) -> Request<'a> {
+        Request::MemoryData { seq, data }
     }
 
     fn end(&self) -> Request {

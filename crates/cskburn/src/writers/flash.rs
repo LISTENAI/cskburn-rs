@@ -24,11 +24,8 @@ impl WriteProtocol for FlashWriteOperation {
         }
     }
 
-    fn data(&self, seq: u32, data: &[u8]) -> Request {
-        Request::FlashData {
-            seq,
-            data: data.to_vec(),
-        }
+    fn data<'a>(&self, seq: u32, data: &'a [u8]) -> Request<'a> {
+        Request::FlashData { seq, data }
     }
 
     fn end(&self) -> Request {
