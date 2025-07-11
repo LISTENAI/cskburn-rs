@@ -21,7 +21,7 @@ impl WriteProtocol for MemoryWriteOperation {
         MEMORY_BLOCK_SIZE
     }
 
-    fn begin(&mut self, offset: u32, size: usize) -> Request {
+    fn begin(&self, offset: u32, size: usize) -> Request {
         Request::MemoryBegin {
             size: size as u32,
             blocks: utils::blocks(size, self.block_size()) as u32,
@@ -30,7 +30,7 @@ impl WriteProtocol for MemoryWriteOperation {
         }
     }
 
-    fn data(&mut self, seq: u32, data: &[u8]) -> Request {
+    fn data(&self, seq: u32, data: &[u8]) -> Request {
         Request::MemoryData {
             seq,
             data: data.to_vec(),

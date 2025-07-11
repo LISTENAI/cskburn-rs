@@ -15,7 +15,7 @@ impl WriteProtocol for FlashWriteOperation {
         FLASH_BLOCK_SIZE
     }
 
-    fn begin(&mut self, offset: u32, size: usize) -> Request {
+    fn begin(&self, offset: u32, size: usize) -> Request {
         Request::FlashBegin {
             size: size as u32,
             blocks: utils::blocks(size, self.block_size()) as u32,
@@ -24,7 +24,7 @@ impl WriteProtocol for FlashWriteOperation {
         }
     }
 
-    fn data(&mut self, seq: u32, data: &[u8]) -> Request {
+    fn data(&self, seq: u32, data: &[u8]) -> Request {
         Request::FlashData {
             seq,
             data: data.to_vec(),

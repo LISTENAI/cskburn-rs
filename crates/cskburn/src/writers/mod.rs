@@ -23,8 +23,8 @@ pub struct WriteStep {
 
 pub trait WriteProtocol {
     fn block_size(&self) -> usize;
-    fn begin(&mut self, offset: u32, size: usize) -> Request;
-    fn data(&mut self, seq: u32, data: &[u8]) -> Request;
+    fn begin(&self, offset: u32, size: usize) -> Request;
+    fn data(&self, seq: u32, data: &[u8]) -> Request;
     fn end(&self) -> Request;
 }
 
