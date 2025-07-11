@@ -1,13 +1,12 @@
+mod flash;
+mod memory;
+
+pub use flash::FlashWriteIterator;
+pub use memory::MemoryWriteIterator;
+
 use log::debug;
 
-use crate::{
-    CSKBurn, Error, Image, Result,
-    commands::{MemoryAction, Request},
-    utils,
-};
-
-const MEMORY_BLOCK_SIZE: usize = 2048;
-const FLASH_BLOCK_SIZE: usize = 4096;
+use crate::{CSKBurn, Error, Image, Result, commands::Request};
 
 #[derive(Debug, Clone)]
 pub struct WriteStep {
@@ -19,58 +18,6 @@ pub trait WriteProtocol {
     fn begin(&mut self, offset: u32, size: usize) -> Request;
     fn data(&mut self, seq: u32, data: &[u8]) -> Request;
     fn end(&self) -> Request;
-}
-
-pub struct MemoryWriteOperation {
-    action: Option<MemoryAction>,
-}
-
-impl WriteProtocol for MemoryWriteOperation {
-    fn begin(&mut self, offset: u32, size: usize) -> Request {
-        Request::MemoryBegin {
-            size: size as u32,
-            blocks: utils::blocks(size, MEMORY_BLOCK_SIZE) as u32,
-            block_size: MEMORY_BLOCK_SIZE as u32,
-            offset,
-        }
-    }
-
-    fn data(&mut self, seq: u32, data: &[u8]) -> Request {
-        Request::MemoryData {
-            seq,
-            data: data.to_vec(),
-        }
-    }
-
-    fn end(&self) -> Request {
-        Request::MemoryEnd {
-            action: self.action.clone().unwrap_or(MemoryAction::Boot()),
-        }
-    }
-}
-
-pub struct FlashWriteOperation {}
-
-impl WriteProtocol for FlashWriteOperation {
-    fn begin(&mut self, offset: u32, size: usize) -> Request {
-        Request::FlashBegin {
-            size: size as u32,
-            blocks: utils::blocks(size, FLASH_BLOCK_SIZE) as u32,
-            block_size: FLASH_BLOCK_SIZE as u32,
-            offset,
-        }
-    }
-
-    fn data(&mut self, seq: u32, data: &[u8]) -> Request {
-        Request::FlashData {
-            seq,
-            data: data.to_vec(),
-        }
-    }
-
-    fn end(&self) -> Request {
-        Request::FlashEnd {}
-    }
 }
 
 pub enum WriteIteratorState {
@@ -145,43 +92,5 @@ impl<'a, T: WriteProtocol> Iterator for WriteIterator<'a, T> {
             },
             WriteIteratorState::End => None,
         }
-    }
-}
-
-pub type MemoryWriteIterator<'a> = WriteIterator<'a, MemoryWriteOperation>;
-
-impl<'a> MemoryWriteIterator<'a> {
-    pub fn new(
-        cskburn: &'a mut CSKBurn,
-        source: &'a mut Image,
-        action: Option<MemoryAction>,
-    ) -> Result<Self> {
-        let total_bytes = source.size()?;
-        Ok(MemoryWriteIterator {
-            cskburn,
-            source,
-            ops: MemoryWriteOperation { action },
-            state: WriteIteratorState::Begin,
-            buffer: vec![0; MEMORY_BLOCK_SIZE],
-            bytes_written: 0,
-            total_bytes,
-        })
-    }
-}
-
-pub type FlashWriteIterator<'a> = WriteIterator<'a, FlashWriteOperation>;
-
-impl<'a> FlashWriteIterator<'a> {
-    pub fn new(cskburn: &'a mut CSKBurn, source: &'a mut Image) -> Result<Self> {
-        let total_bytes = source.size()?;
-        Ok(FlashWriteIterator {
-            cskburn,
-            source,
-            ops: FlashWriteOperation {},
-            state: WriteIteratorState::Begin,
-            buffer: vec![0; FLASH_BLOCK_SIZE],
-            bytes_written: 0,
-            total_bytes,
-        })
     }
 }
