@@ -6,7 +6,7 @@ mod types;
 mod utils;
 mod writers;
 
-use commands::{ChipId, FlashInfo, MemoryAction, Request};
+use commands::{ChipId, FlashInfo, Request};
 use log::{debug, trace};
 use serialport::SerialPort;
 use slip_codec::{SlipDecoder, SlipEncoder};
@@ -19,10 +19,9 @@ use std::{
 pub use error::Error;
 pub use types::{family::Family, image::Image, region::Region, source::Source};
 
-use crate::{
-    requests::TransferMode,
-    writers::{FlashWriteIterator, MemoryWriteIterator},
-};
+use crate::{requests::TransferMode, writers::WriteIterator};
+
+pub use crate::writers::WriteTarget;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -194,41 +193,21 @@ impl CSKBurn {
         self.command(Request::ReadChipId)
     }
 
-    pub fn memory_write(
-        &mut self,
-        source: &mut Image,
-        action: Option<MemoryAction>,
-    ) -> Result<usize> {
+    pub fn write(&mut self, source: &mut Image, target: WriteTarget) -> Result<usize> {
         let mut total_written = 0;
-        for step in self.memory_write_iter(source, action)? {
+        for step in self.write_iter(source, target)? {
             let step = step?;
             total_written = step.bytes_written;
         }
         Ok(total_written)
     }
 
-    pub fn memory_write_iter<'a>(
+    pub fn write_iter<'a>(
         &'a mut self,
         source: &'a mut Image,
-        action: Option<MemoryAction>,
-    ) -> Result<MemoryWriteIterator<'a>> {
-        MemoryWriteIterator::new(self, source, action)
-    }
-
-    pub fn flash_write(&mut self, source: &mut Image) -> Result<usize> {
-        let mut total_written = 0;
-        for step in self.flash_write_iter(source)? {
-            let step = step?;
-            total_written = step.bytes_written;
-        }
-        Ok(total_written)
-    }
-
-    pub fn flash_write_iter<'a>(
-        &'a mut self,
-        source: &'a mut Image,
-    ) -> Result<FlashWriteIterator<'a>> {
-        FlashWriteIterator::new(self, source)
+        target: WriteTarget,
+    ) -> Result<WriteIterator<'a>> {
+        WriteIterator::new(self, source, target)
     }
 
     pub fn flash_verify(&mut self, region: Region) -> Result<[u8; 16]> {

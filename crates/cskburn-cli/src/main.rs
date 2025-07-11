@@ -6,7 +6,7 @@ mod types;
 use anyhow::{Result, anyhow};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use console::Style;
-use cskburn::{EraseTarget, Family, Image, ProbeTarget, Region, list_ports};
+use cskburn::{EraseTarget, Family, Image, ProbeTarget, Region, WriteTarget, list_ports};
 use dialoguer::Select;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, trace};
@@ -184,7 +184,7 @@ fn main() -> Result<()> {
     let progress = print_progress("Entering", burner_size);
 
     for step in cskburn
-        .memory_write_iter(&mut burner, None)
+        .write_iter(&mut burner, WriteTarget::Memory { action: None })
         .map_err(|e| anyhow!("Failed to write burner image: {}", e))?
     {
         let step = step.map_err(|e| anyhow!("Failed to write burner image: {}", e))?;
@@ -241,7 +241,7 @@ fn main() -> Result<()> {
                 let progress = print_progress("Writing", region.size as usize);
 
                 for step in cskburn
-                    .flash_write_iter(&mut source)
+                    .write_iter(&mut source, WriteTarget::Flash)
                     .map_err(|e| anyhow!("Failed to write file: {}", e))?
                 {
                     let step = step.map_err(|e| anyhow!("Failed to write file: {}", e))?;

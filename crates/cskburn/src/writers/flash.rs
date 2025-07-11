@@ -1,20 +1,25 @@
-use crate::{
-    CSKBurn, Image, Result,
-    commands::Request,
-    utils,
-    writers::{WriteIterator, WriteIteratorState, WriteProtocol},
-};
+use crate::{commands::Request, utils, writers::WriteProtocol};
 
 const FLASH_BLOCK_SIZE: usize = 4096;
 
 pub struct FlashWriteOperation {}
 
+impl FlashWriteOperation {
+    pub fn new() -> Self {
+        FlashWriteOperation {}
+    }
+}
+
 impl WriteProtocol for FlashWriteOperation {
+    fn block_size(&self) -> usize {
+        FLASH_BLOCK_SIZE
+    }
+
     fn begin(&mut self, offset: u32, size: usize) -> Request {
         Request::FlashBegin {
             size: size as u32,
-            blocks: utils::blocks(size, FLASH_BLOCK_SIZE) as u32,
-            block_size: FLASH_BLOCK_SIZE as u32,
+            blocks: utils::blocks(size, self.block_size()) as u32,
+            block_size: self.block_size() as u32,
             offset,
         }
     }
@@ -28,22 +33,5 @@ impl WriteProtocol for FlashWriteOperation {
 
     fn end(&self) -> Request {
         Request::FlashEnd {}
-    }
-}
-
-pub type FlashWriteIterator<'a> = WriteIterator<'a, FlashWriteOperation>;
-
-impl<'a> FlashWriteIterator<'a> {
-    pub fn new(cskburn: &'a mut CSKBurn, source: &'a mut Image) -> Result<Self> {
-        let total_bytes = source.size()?;
-        Ok(FlashWriteIterator {
-            cskburn,
-            source,
-            ops: FlashWriteOperation {},
-            state: WriteIteratorState::Begin,
-            buffer: vec![0; FLASH_BLOCK_SIZE],
-            bytes_written: 0,
-            total_bytes,
-        })
     }
 }
