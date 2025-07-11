@@ -36,8 +36,8 @@ struct Cli {
     #[arg(short, long, default_value = "1500000")]
     baud: u32,
 
-    /// Chip family [possible values: 6, mars]
-    #[arg(short = 'C', long, default_value = "6")]
+    /// Chip family [possible values: venus, mars]
+    #[arg(short = 'C', long)]
     chip: String,
 
     /// Path to burner image to use, omit to use built-in
@@ -126,8 +126,8 @@ fn main() -> Result<()> {
 
     let path = cli.port.map(Ok).unwrap_or_else(|| choose_port())?;
 
-    let chip =
-        Family::from_str(&cli.chip).map_err(|_| anyhow!("Invalid chip family: {}", cli.chip))?;
+    let chip = Family::from_str(&cli.chip)
+        .map_err(|_| anyhow!("Unsupported chip family: {}", cli.chip))?;
 
     let mut burner = cli.burner.map_or_else(
         || Ok(chip.burner()),
