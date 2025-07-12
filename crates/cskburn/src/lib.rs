@@ -1,5 +1,6 @@
 mod commands;
 mod error;
+mod family;
 mod requests;
 mod slip;
 mod types;
@@ -7,8 +8,8 @@ mod utils;
 mod writers;
 
 use commands::{ChipId, FlashInfo, Request};
-use log::{debug, trace};
-use serialport::SerialPort;
+use log::debug;
+use serialport::{ClearBuffer, SerialPort};
 use slip_codec::{SlipDecoder, SlipEncoder};
 use std::{
     io::{self, Cursor},
@@ -17,9 +18,10 @@ use std::{
 };
 
 pub use error::Error;
-pub use types::{family::Family, image::Image, region::Region, source::Source};
+pub use family::Family;
+pub use types::{image::Image, region::Region, source::Source};
 
-use crate::{requests::TransferMode, writers::WriteIterator};
+use crate::{family::ChipProtocol, requests::TransferMode, writers::WriteIterator};
 
 pub use crate::writers::WriteTarget;
 
@@ -66,10 +68,13 @@ impl CSKBurnBuilder {
             .dtr_on_open(false)
             .open()?;
 
+        let protocol = self.chip.protocol();
+
         Ok(CSKBurn {
             port,
             baud: self.baud,
             chip: self.chip,
+            protocol,
             slip_enc: SlipEncoder::new(true),
             slip_enc_buf: Cursor::new(Vec::new()),
             slip_dec: SlipDecoder::new(),
@@ -82,6 +87,7 @@ pub struct CSKBurn {
     port: Box<dyn SerialPort>,
     baud: u32,
     chip: Family,
+    protocol: Box<dyn ChipProtocol>,
     slip_enc: SlipEncoder,
     slip_enc_buf: Cursor<Vec<u8>>,
     slip_dec: SlipDecoder,
@@ -101,47 +107,18 @@ pub enum EraseTarget {
 
 impl CSKBurn {
     pub fn reset(&mut self, boot_mode: bool, reset_interval: Option<Duration>) -> Result<()> {
-        let reset_interval = reset_interval.unwrap_or(Duration::from_millis(100));
-
-        if self.chip == Family::MARS {
-            trace!("set DTR: {}", true);
-            self.port.write_data_terminal_ready(true)?;
-
-            sleep(if boot_mode {
-                Duration::from_secs(2)
-            } else {
-                reset_interval
-            });
-
-            trace!("set DTR: {}", false);
-            self.port.write_data_terminal_ready(false)?;
-
-            sleep(reset_interval);
-        } else {
-            trace!("set RTS: {}", boot_mode);
-            self.port.write_request_to_send(boot_mode)?;
-
-            trace!("set DTR: {}", true);
-            self.port.write_data_terminal_ready(true)?;
-
-            sleep(reset_interval);
-
-            trace!("set DTR: {}", false);
-            self.port.write_data_terminal_ready(false)?;
-
-            sleep(reset_interval);
-        }
-
+        self.protocol
+            .reset(self.port.as_mut(), boot_mode, reset_interval)?;
         Ok(())
     }
 
     pub fn probe(&mut self, target: ProbeTarget, attempts: Option<usize>) -> Result<()> {
         if target == ProbeTarget::Burner && self.port.baud_rate()? != BAUD_RATE_DEFAULT {
-            self.port.clear(serialport::ClearBuffer::All)?;
+            self.port.clear(ClearBuffer::All)?;
             self.port.set_baud_rate(BAUD_RATE_DEFAULT)?;
         }
 
-        if self.chip == Family::MARS {
+        if self.protocol.rom_requires_adaptive_duplex() {
             let mode = self.adaptive_duplex()?;
             debug!("adaptive duplex mode: {:?}", mode);
 
@@ -157,12 +134,12 @@ impl CSKBurn {
 
         self.sync(attempts)?;
 
-        if self.baud != BAUD_RATE_DEFAULT && self.chip.rom_supports_change_baudrate() {
+        if self.baud != BAUD_RATE_DEFAULT && self.protocol.rom_supports_change_baudrate() {
             let _: () = self.command(Request::ChangeBaudrate {
                 to: self.baud,
                 from: BAUD_RATE_DEFAULT,
             })?;
-            self.port.clear(serialport::ClearBuffer::All)?;
+            self.port.clear(ClearBuffer::All)?;
             self.port.set_baud_rate(self.baud)?;
 
             self.sync(attempts)?;
