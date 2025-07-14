@@ -10,8 +10,8 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
-binrw = "0.14.0"
+binrw = "0.15.0"
 log = { workspace = true }
-serialport = "4.3.0"
+serialport = "4.7.2"
 slip-codec = "0.4.0"
-thiserror = "1.0.62"
+thiserror = "2.0.12"

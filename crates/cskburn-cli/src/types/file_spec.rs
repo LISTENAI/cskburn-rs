@@ -33,7 +33,7 @@ impl FileSpec {
             }
             context.consume(&buf[..count]);
         }
-        Ok(context.compute().0)
+        Ok(context.finalize().0)
     }
 }
 
