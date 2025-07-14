@@ -57,32 +57,6 @@ pub fn list_ports() -> Result<Vec<String>> {
         })
 }
 
-pub fn new(path: String, baud: u32, chip: Family) -> CSKBurnBuilder {
-    CSKBurnBuilder { path, baud, chip }
-}
-
-impl CSKBurnBuilder {
-    pub fn open(self) -> Result<CSKBurn> {
-        let port = serialport::new(self.path, BAUD_RATE_DEFAULT)
-            .flow_control(serialport::FlowControl::None)
-            .dtr_on_open(false)
-            .open()?;
-
-        let protocol = self.chip.protocol();
-
-        Ok(CSKBurn {
-            port,
-            baud: self.baud,
-            chip: self.chip,
-            protocol,
-            slip_enc: SlipEncoder::new(true),
-            slip_enc_buf: Cursor::new(Vec::new()),
-            slip_dec: SlipDecoder::new(),
-            slip_dec_buf: Cursor::new(Vec::new()),
-        })
-    }
-}
-
 pub struct CSKBurn {
     port: Box<dyn SerialPort>,
     baud: u32,
@@ -106,6 +80,26 @@ pub enum EraseTarget {
 }
 
 impl CSKBurn {
+    pub fn connect(path: &str, baud: u32, chip: Family) -> Result<Self> {
+        let port = serialport::new(path, BAUD_RATE_DEFAULT)
+            .flow_control(serialport::FlowControl::None)
+            .dtr_on_open(false)
+            .open()?;
+
+        let protocol = chip.protocol();
+
+        Ok(CSKBurn {
+            port,
+            baud,
+            chip,
+            protocol,
+            slip_enc: SlipEncoder::new(true),
+            slip_enc_buf: Cursor::new(Vec::new()),
+            slip_dec: SlipDecoder::new(),
+            slip_dec_buf: Cursor::new(Vec::new()),
+        })
+    }
+
     pub fn reset(&mut self, boot_mode: bool, reset_interval: Option<Duration>) -> Result<()> {
         self.protocol
             .reset(self.port.as_mut(), boot_mode, reset_interval)?;

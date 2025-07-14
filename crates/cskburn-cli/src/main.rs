@@ -6,7 +6,7 @@ mod types;
 use anyhow::{Result, anyhow};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use console::Style;
-use cskburn::{EraseTarget, Family, Image, ProbeTarget, Region, WriteTarget, list_ports};
+use cskburn::{CSKBurn, EraseTarget, Family, Image, ProbeTarget, Region, WriteTarget, list_ports};
 use dialoguer::Select;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, trace};
@@ -139,8 +139,7 @@ fn main() -> Result<()> {
 
     // Create and open the device
 
-    let mut cskburn = cskburn::new(path, cli.baud, chip)
-        .open()
+    let mut cskburn = CSKBurn::connect(&path, cli.baud, chip)
         .map_err(|e| anyhow!("Failed to open device: {}", e))?;
 
     // Probe the device
