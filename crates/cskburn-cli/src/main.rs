@@ -36,7 +36,7 @@ struct Cli {
     #[arg(short, long, default_value = "1500000")]
     baud: u32,
 
-    /// Chip family [possible values: venus, mars]
+    /// Chip family [possible values: venus, mars, arcs]
     #[arg(short = 'C', long)]
     chip: String,
 
@@ -236,6 +236,18 @@ fn main() -> Result<()> {
             let count = files.len();
             for (i, (file, mut source, region)) in files.into_iter().enumerate() {
                 print_line(format!("{}/{}", i + 1, count), format!("{}", file));
+
+                if !chip.protocol().burner_supports_progressive_erase() {
+                    let progress = print_spinner("Erasing");
+
+                    cskburn
+                        .flash_erase(EraseTarget::Region(region.clone()))
+                        .map_err(|e| anyhow!("Failed to erase flash region: {}", e))?;
+
+                    progress.finish_and_clear();
+
+                    print_step("Erased", format!("{}", region));
+                }
 
                 let progress = print_progress("Writing", region.size as usize);
 

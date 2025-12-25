@@ -3,12 +3,13 @@ use std::{io::Cursor, str::FromStr, thread::sleep, time::Duration};
 use log::trace;
 use serialport::SerialPort;
 
+mod arcs;
 mod mars;
 mod venus;
 
 use crate::{
     Image,
-    family::{mars::MarsProtocol, venus::VenusProtocol},
+    family::{arcs::ArcsProtocol, mars::MarsProtocol, venus::VenusProtocol},
 };
 
 pub trait ChipProtocol {
@@ -43,12 +44,17 @@ pub trait ChipProtocol {
     fn rom_requires_adaptive_duplex(&self) -> bool {
         false
     }
+
+    fn burner_supports_progressive_erase(&self) -> bool {
+        true
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Family {
     VENUS,
     MARS,
+    ARCS,
 }
 
 impl Family {
@@ -62,6 +68,10 @@ impl Family {
                 0x0001_0000,
                 Box::new(Cursor::new(include_bytes!("../burners/burner_mars.bin"))),
             ),
+            Family::ARCS => Image::new(
+                0x2004_0000,
+                Box::new(Cursor::new(include_bytes!("../burners/burner_arcs.bin"))),
+            ),
         }
     }
 
@@ -69,6 +79,7 @@ impl Family {
         match self {
             Family::VENUS => Box::new(VenusProtocol),
             Family::MARS => Box::new(MarsProtocol),
+            Family::ARCS => Box::new(ArcsProtocol),
         }
     }
 }
@@ -82,6 +93,7 @@ impl FromStr for Family {
             x if x.starts_with("csk6") => Ok(Family::VENUS),
             "mars" | "5" => Ok(Family::MARS),
             x if x.starts_with("csk5") => Ok(Family::MARS),
+            "arcs" => Ok(Family::ARCS),
             _ => Err("Unsupported chip family"),
         }
     }
