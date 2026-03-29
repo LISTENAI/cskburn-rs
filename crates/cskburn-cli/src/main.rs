@@ -53,6 +53,10 @@ struct Cli {
     #[arg(long, default_value_t = DEFAULT_RESET_DELAY)]
     reset_delay: u64,
 
+    /// Disable progress bars and spinners
+    #[arg(long)]
+    no_progress: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -150,7 +154,7 @@ fn main() -> Result<()> {
 
     // Probe the device
 
-    let progress = print_spinner("Probing");
+    let progress = print_spinner("Probing", cli.no_progress);
 
     let reset_interval = Duration::from_millis(cli.reset_delay);
 
@@ -188,7 +192,7 @@ fn main() -> Result<()> {
         .size()
         .map_err(|e| anyhow!("Failed to get burner size: {}", e))?;
 
-    let progress = print_progress("Entering", burner_size);
+    let progress = print_progress("Entering", burner_size, cli.no_progress);
 
     for step in cskburn
         .write_iter(&mut burner, WriteTarget::Memory { action: None })
@@ -278,7 +282,7 @@ fn main() -> Result<()> {
                 print_line(format!("{}/{}", i + 1, count), label);
 
                 if !chip.protocol().burner_supports_progressive_erase() {
-                    let progress = print_spinner("Erasing");
+                    let progress = print_spinner("Erasing", cli.no_progress);
 
                     cskburn
                         .flash_erase(EraseTarget::Region(region.clone()))
@@ -289,7 +293,7 @@ fn main() -> Result<()> {
                     print_step("Erased", format!("{}", region));
                 }
 
-                let progress = print_progress("Writing", region.size as usize);
+                let progress = print_progress("Writing", region.size as usize, cli.no_progress);
 
                 for step in cskburn
                     .write_iter(&mut source, WriteTarget::Flash)
@@ -311,7 +315,7 @@ fn main() -> Result<()> {
                 );
 
                 if args.verify_all {
-                    let progress = print_spinner("Verifying");
+                    let progress = print_spinner("Verifying", cli.no_progress);
 
                     let expect_md5 = Md5(md5_fn()?);
                     let actual_md5 = Md5(cskburn
@@ -385,10 +389,13 @@ fn choose_port() -> Result<String> {
     Ok(ports[choice].clone())
 }
 
-fn print_spinner<T>(prefix: T) -> ProgressBar
+fn print_spinner<T>(prefix: T, hidden: bool) -> ProgressBar
 where
     T: Into<Cow<'static, str>>,
 {
+    if hidden {
+        return ProgressBar::hidden();
+    }
     let style = ProgressStyle::with_template("{msg:>12.cyan.bold} {spinner} {prefix}").unwrap();
     let spinner = ProgressBar::new_spinner();
     spinner.set_style(style);
@@ -397,10 +404,13 @@ where
     spinner
 }
 
-fn print_progress<T>(prefix: T, len: usize) -> ProgressBar
+fn print_progress<T>(prefix: T, len: usize, hidden: bool) -> ProgressBar
 where
     T: Into<Cow<'static, str>>,
 {
+    if hidden {
+        return ProgressBar::hidden();
+    }
     let style = ProgressStyle::with_template("{msg:>12.cyan.bold} [{bar:20}] {binary_bytes}/{binary_total_bytes} @ {bytes_per_sec} (eta {eta})")
             .unwrap()
             .progress_chars("=> ");
