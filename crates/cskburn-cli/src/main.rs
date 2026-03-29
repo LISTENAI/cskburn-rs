@@ -15,16 +15,9 @@ use log::{debug, trace};
 use crate::md5::Md5;
 use crate::types::{FileSpec, RegionSpec};
 
-/// Number of times to attempt to reset the device when probing before giving up.
-/// In each attempt, a series of SYNC commands will be issued.
-const PROBE_RESET_ATTEMPTS: usize = 5;
-
-/// Number of times to attempt to issue a SYNC command when probing. Each attempt
-/// takes about 500 ms.
-const PROBE_SYNC_ATTEMPTS: usize = 3;
-
-/// Interval between the reset pin being asserted and de-asserted.
-const RESET_INTERVAL: Duration = Duration::from_millis(100);
+const DEFAULT_RESET_ATTEMPTS: usize = 5;
+const DEFAULT_SYNC_ATTEMPTS: usize = 3;
+const DEFAULT_RESET_DELAY: u64 = 100;
 
 #[derive(Parser, Debug)]
 #[command(version, author, about, long_about)]
@@ -47,6 +40,18 @@ struct Cli {
     /// Target to program
     #[arg(short, long, value_enum, default_value = "flash")]
     target: Target,
+
+    /// Number of reset attempts during device probing
+    #[arg(long, default_value_t = DEFAULT_RESET_ATTEMPTS)]
+    reset_attempts: usize,
+
+    /// Number of sync attempts per reset during probing
+    #[arg(long, default_value_t = DEFAULT_SYNC_ATTEMPTS)]
+    sync_attempts: usize,
+
+    /// Reset pulse duration in milliseconds
+    #[arg(long, default_value_t = DEFAULT_RESET_DELAY)]
+    reset_delay: u64,
 
     #[command(subcommand)]
     command: Commands,
@@ -147,22 +152,24 @@ fn main() -> Result<()> {
 
     let progress = print_spinner("Probing");
 
+    let reset_interval = Duration::from_millis(cli.reset_delay);
+
     let mut success = false;
-    for attempts in 0..PROBE_RESET_ATTEMPTS {
+    for attempts in 0..cli.reset_attempts {
         if attempts > 0 {
             progress.set_prefix(format!(
                 "reset attempt {}/{}",
                 attempts + 1,
-                PROBE_RESET_ATTEMPTS
+                cli.reset_attempts
             ));
         }
 
         cskburn
-            .reset(true, Some(RESET_INTERVAL))
+            .reset(true, Some(reset_interval))
             .map_err(|e| anyhow!("Failed to reset device: {}", e))?;
 
         if cskburn
-            .probe(ProbeTarget::ROM, Some(PROBE_SYNC_ATTEMPTS))
+            .probe(ProbeTarget::ROM, Some(cli.sync_attempts))
             .is_ok()
         {
             success = true;
@@ -192,7 +199,7 @@ fn main() -> Result<()> {
     }
 
     cskburn
-        .probe(ProbeTarget::Burner, Some(PROBE_SYNC_ATTEMPTS))
+        .probe(ProbeTarget::Burner, Some(cli.sync_attempts))
         .map_err(|e| anyhow!("Failed entering burner mode: {}", e))?;
 
     progress.finish_and_clear();
@@ -354,7 +361,7 @@ fn main() -> Result<()> {
     // Reset the device to exit burner mode
 
     cskburn
-        .reset(false, Some(RESET_INTERVAL))
+        .reset(false, Some(reset_interval))
         .map_err(|e| anyhow!("Failed to reset device: {}", e))?;
 
     Ok(())
