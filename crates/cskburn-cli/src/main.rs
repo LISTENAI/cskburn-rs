@@ -1,5 +1,6 @@
 use std::{borrow::Cow, fmt::Display, str::FromStr, time::Duration};
 
+mod hex;
 mod md5;
 mod types;
 
@@ -221,21 +222,53 @@ fn main() -> Result<()> {
                     .map_err(|e| anyhow!("Failed to erase flash: {}", e))?;
             }
 
-            let files = args
-                .files
-                .into_iter()
-                .map(|spec| {
-                    let source = Image::try_from(spec.clone())
-                        .map_err(|e| anyhow!("Failed to open file: {}", e))?;
-                    let region = Region::try_from(&source)
-                        .map_err(|e| anyhow!("Failed to create region from file: {}", e))?;
-                    Ok((spec, source, region))
-                })
-                .collect::<Result<Vec<(FileSpec, Image, Region)>>>()?;
+            type Md5Fn = Box<dyn Fn() -> Result<[u8; 16]>>;
 
-            let count = files.len();
-            for (i, (file, mut source, region)) in files.into_iter().enumerate() {
-                print_line(format!("{}/{}", i + 1, count), format!("{}", file));
+            // Resolve all file specs into (label, image, region, md5_fn) tuples.
+            // A single HEX file may produce multiple images.
+            let mut images: Vec<(String, Image, Region, Md5Fn)> = Vec::new();
+
+            for spec in &args.files {
+                match spec {
+                    FileSpec::Hex { path } => {
+                        for hex_image in hex::parse_hex(path, chip.base_addr())? {
+                            let label = format!("{}@0x{:08x}", path, hex_image.addr);
+
+                            let md5_fn: Md5Fn = Box::new({
+                                let hex_image = &hex_image;
+                                let md5 = hex_image.md5();
+                                move || Ok(md5)
+                            });
+
+                            let source = hex_image.into();
+                            let region = Region::try_from(&source)
+                                .map_err(|e| anyhow!("Failed to create region: {}", e))?;
+
+                            images.push((label, source, region, md5_fn));
+                        }
+                    }
+                    FileSpec::Raw { .. } => {
+                        let label = format!("{}", spec);
+
+                        let source = Image::try_from(spec.clone())
+                            .map_err(|e| anyhow!("Failed to open file: {}", e))?;
+                        let region = Region::try_from(&source)
+                            .map_err(|e| anyhow!("Failed to create region: {}", e))?;
+
+                        let spec = spec.clone();
+                        let md5_fn: Md5Fn = Box::new(move || {
+                            spec.md5()
+                                .map_err(|e| anyhow!("Failed to calculate file MD5: {}", e))
+                        });
+
+                        images.push((label, source, region, md5_fn));
+                    }
+                }
+            }
+
+            let count = images.len();
+            for (i, (label, mut source, region, md5_fn)) in images.into_iter().enumerate() {
+                print_line(format!("{}/{}", i + 1, count), label);
 
                 if !chip.protocol().burner_supports_progressive_erase() {
                     let progress = print_spinner("Erasing");
@@ -273,9 +306,7 @@ fn main() -> Result<()> {
                 if args.verify_all {
                     let progress = print_spinner("Verifying");
 
-                    let expect_md5 = Md5(file
-                        .md5()
-                        .map_err(|e| anyhow!("Failed to calculate file MD5: {}", e))?);
+                    let expect_md5 = Md5(md5_fn()?);
                     let actual_md5 = Md5(cskburn
                         .flash_verify(region)
                         .map_err(|e| anyhow!("Failed to verify file: {}", e))?);

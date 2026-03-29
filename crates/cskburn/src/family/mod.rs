@@ -75,6 +75,14 @@ impl Family {
         }
     }
 
+    pub fn base_addr(&self) -> u32 {
+        match self {
+            Family::VENUS => 0x1800_0000,
+            Family::MARS => 0x1800_0000,
+            Family::ARCS => 0x3000_0000,
+        }
+    }
+
     pub fn protocol(&self) -> Box<dyn ChipProtocol> {
         match self {
             Family::VENUS => Box::new(VenusProtocol),
