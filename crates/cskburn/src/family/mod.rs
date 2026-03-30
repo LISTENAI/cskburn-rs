@@ -102,6 +102,7 @@ impl FromStr for Family {
             "mars" | "5" => Ok(Family::MARS),
             x if x.starts_with("csk5") => Ok(Family::MARS),
             "arcs" => Ok(Family::ARCS),
+            x if x.starts_with("ls26") => Ok(Family::ARCS),
             _ => Err("Unsupported chip family"),
         }
     }
