@@ -54,6 +54,9 @@ impl<'a> Iterator for WriteIterator<'a> {
     type Item = Result<WriteStep>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if let Err(e) = self.cskburn.check_cancelled() {
+            return Some(Err(e));
+        }
         match self.state {
             WriteIteratorState::Begin => {
                 let req = self.protocol.begin(self.source.addr, self.total_bytes);

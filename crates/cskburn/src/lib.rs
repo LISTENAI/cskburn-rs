@@ -13,6 +13,10 @@ use serialport::{ClearBuffer, SerialPort};
 use slip_codec::{SlipDecoder, SlipEncoder};
 use std::{
     io::{self, Cursor},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     thread::sleep,
     time::Duration,
 };
@@ -66,6 +70,7 @@ pub struct CSKBurn {
     slip_enc_buf: Cursor<Vec<u8>>,
     slip_dec: SlipDecoder,
     slip_dec_buf: Cursor<Vec<u8>>,
+    cancel: Option<Arc<AtomicBool>>,
 }
 
 #[derive(PartialEq)]
@@ -80,6 +85,19 @@ pub enum EraseTarget {
 }
 
 impl CSKBurn {
+    pub fn set_cancel_token(&mut self, token: Arc<AtomicBool>) {
+        self.cancel = Some(token);
+    }
+
+    pub(crate) fn check_cancelled(&self) -> Result<()> {
+        if let Some(ref token) = self.cancel {
+            if token.load(Ordering::Relaxed) {
+                return Err(Error::Cancelled);
+            }
+        }
+        Ok(())
+    }
+
     pub fn connect(path: &str, baud: u32, chip: Family) -> Result<Self> {
         let port = serialport::new(path, BAUD_RATE_DEFAULT)
             .flow_control(serialport::FlowControl::None)
@@ -97,6 +115,7 @@ impl CSKBurn {
             slip_enc_buf: Cursor::new(Vec::new()),
             slip_dec: SlipDecoder::new(),
             slip_dec_buf: Cursor::new(Vec::new()),
+            cancel: None,
         })
     }
 
@@ -144,6 +163,7 @@ impl CSKBurn {
 
     fn sync(&mut self, attempts: Option<usize>) -> Result<()> {
         for _ in 0..attempts.unwrap_or(1) {
+            self.check_cancelled()?;
             if self.command::<()>(Request::Sync()).is_ok() {
                 return Ok(());
             }
@@ -182,6 +202,7 @@ impl CSKBurn {
     }
 
     pub fn flash_verify(&mut self, region: Region) -> Result<[u8; 16]> {
+        self.check_cancelled()?;
         self.command(Request::FlashMd5 {
             offset: region.addr,
             size: region.size,
@@ -189,6 +210,7 @@ impl CSKBurn {
     }
 
     pub fn flash_erase(&mut self, target: EraseTarget) -> Result<()> {
+        self.check_cancelled()?;
         match target {
             EraseTarget::Entire => self.command(Request::EraseFlash),
             EraseTarget::Region(region) => self.command(Request::EraseRegion {

@@ -11,6 +11,8 @@ pub enum Error {
     BinRW(#[from] binrw::Error),
     #[error(transparent)]
     Io(#[from] io::Error),
+    #[error("operation cancelled")]
+    Cancelled,
 }
 
 impl Error {
