@@ -19,6 +19,8 @@ const DEFAULT_RESET_ATTEMPTS: usize = 5;
 const DEFAULT_SYNC_ATTEMPTS: usize = 3;
 const DEFAULT_RESET_DELAY: u64 = 100;
 
+const FLASH_ALIGN: u32 = 4096;
+
 #[derive(Parser, Debug)]
 #[command(version, author, about, long_about)]
 struct Cli {
@@ -218,9 +220,10 @@ fn main() -> Result<()> {
     let flash_id = cskburn
         .flash_info()
         .map_err(|e| anyhow!("Failed to read flash ID: {}", e))?;
+    let flash_size = flash_id.size() as u64;
     print_line(
         "flash-id",
-        format!("{} ({} MiB)", flash_id, flash_id.size() / 1024 / 1024),
+        format!("{} ({} MiB)", flash_id, flash_size / 1024 / 1024),
     );
 
     // Run desired command
@@ -275,6 +278,16 @@ fn main() -> Result<()> {
                         images.push((label, source, region, md5_fn));
                     }
                 }
+            }
+
+            for (i, (_, _, region, _)) in images.iter().enumerate() {
+                validate_aligned(region.addr, FLASH_ALIGN, &format!("partition {}", i + 1))?;
+                validate_bounds(
+                    region.addr,
+                    region.size,
+                    flash_size,
+                    &format!("partition {}", i + 1),
+                )?;
             }
 
             let count = images.len();
@@ -343,6 +356,13 @@ fn main() -> Result<()> {
             print_step("Done", "".to_string());
         }
         Commands::Erase(args) => {
+            for spec in &args.regions {
+                let region: Region = spec.clone().into();
+                validate_aligned(region.addr, FLASH_ALIGN, "erase address")?;
+                validate_aligned(region.size, FLASH_ALIGN, "erase size")?;
+                validate_bounds(region.addr, region.size, flash_size, "erase region")?;
+            }
+
             for spec in args.regions {
                 cskburn
                     .flash_erase(EraseTarget::Region(spec.into()))
@@ -353,6 +373,11 @@ fn main() -> Result<()> {
             .flash_erase(EraseTarget::Entire)
             .map_err(|e| anyhow!("Failed to erase flash: {}", e))?,
         Commands::Verify(args) => {
+            for spec in &args.regions {
+                let region: Region = spec.clone().into();
+                validate_bounds(region.addr, region.size, flash_size, "verify region")?;
+            }
+
             for spec in args.regions {
                 let md5 = cskburn
                     .flash_verify(spec.into())
@@ -436,4 +461,46 @@ where
     T: Into<Cow<'static, str>> + Display,
 {
     println!("{:>12} {}", prefix, message)
+}
+
+fn validate_aligned(value: u32, align: u32, label: &str) -> Result<()> {
+    if value % align != 0 {
+        return Err(anyhow!(
+            "Address 0x{:08x} of {} should be {} aligned",
+            value,
+            label,
+            format_size(align as u64),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_bounds(addr: u32, size: u32, flash_size: u64, label: &str) -> Result<()> {
+    if (addr as u64) >= flash_size {
+        return Err(anyhow!(
+            "Start address 0x{:08x} of {} exceeds flash capacity ({} MiB)",
+            addr,
+            label,
+            flash_size / 1024 / 1024,
+        ));
+    }
+    if (addr as u64) + (size as u64) > flash_size {
+        return Err(anyhow!(
+            "End address 0x{:08x} of {} exceeds flash capacity ({} MiB)",
+            addr + size,
+            label,
+            flash_size / 1024 / 1024,
+        ));
+    }
+    Ok(())
+}
+
+fn format_size(bytes: u64) -> String {
+    if bytes >= 1024 * 1024 {
+        format!("{}M", bytes / 1024 / 1024)
+    } else if bytes >= 1024 {
+        format!("{}K", bytes / 1024)
+    } else {
+        format!("{}B", bytes)
+    }
 }
