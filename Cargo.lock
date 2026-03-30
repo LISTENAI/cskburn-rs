@@ -220,6 +220,7 @@ name = "cskburn"
 version = "2.0.0-alpha.2"
 dependencies = [
  "binrw",
+ "ihex",
  "log",
  "serialport",
  "slip-codec",
@@ -236,7 +237,6 @@ dependencies = [
  "cskburn",
  "dialoguer",
  "env_logger",
- "ihex",
  "indicatif",
  "log",
  "md5",

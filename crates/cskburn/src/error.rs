@@ -13,6 +13,8 @@ pub enum Error {
     Io(#[from] io::Error),
     #[error("operation cancelled")]
     Cancelled,
+    #[error("{0}")]
+    Hex(String),
 }
 
 impl Error {

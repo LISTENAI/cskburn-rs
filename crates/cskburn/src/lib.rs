@@ -1,6 +1,8 @@
 mod commands;
 mod error;
 mod family;
+#[cfg(feature = "hex")]
+pub mod hex;
 mod requests;
 mod slip;
 mod types;

@@ -1,20 +1,14 @@
 use std::fs::read_to_string;
 use std::io::Cursor;
 
-use anyhow::{Result, anyhow};
-use cskburn::{Image, Source};
 use ihex::{Reader, Record};
+
+use crate::{Error, Image, Result, Source};
 
 /// A contiguous data segment extracted from an Intel HEX file.
 pub struct HexSegment {
     pub addr: u32,
-    data: Vec<u8>,
-}
-
-impl HexSegment {
-    pub fn md5(&self) -> [u8; 16] {
-        md5::compute(&self.data).0
-    }
+    pub data: Vec<u8>,
 }
 
 impl Into<Image> for HexSegment {
@@ -29,8 +23,8 @@ impl Into<Image> for HexSegment {
 /// The HEX file contains absolute addresses. The chip's `base_addr` is
 /// subtracted to produce flash-relative offsets.
 pub fn parse_hex(path: &str, base_addr: u32) -> Result<Vec<HexSegment>> {
-    let content =
-        read_to_string(path).map_err(|e| anyhow!("Failed to read HEX file {}: {}", path, e))?;
+    let content = read_to_string(path)
+        .map_err(|e| Error::Hex(format!("Failed to read HEX file {}: {}", path, e)))?;
 
     let segments = assemble_segments(&content)?;
 
@@ -39,11 +33,10 @@ pub fn parse_hex(path: &str, base_addr: u32) -> Result<Vec<HexSegment>> {
         .map(|seg| {
             let HexSegment { addr, data } = seg;
             let addr = addr.checked_sub(base_addr).ok_or_else(|| {
-                anyhow!(
+                Error::Hex(format!(
                     "HEX address 0x{:08x} is below chip base address 0x{:08x}",
-                    addr,
-                    base_addr
-                )
+                    addr, base_addr
+                ))
             })?;
             Ok(HexSegment { addr, data })
         })
@@ -67,7 +60,8 @@ fn assemble_segments(content: &str) -> Result<Vec<HexSegment>> {
     let mut upper_addr: u32 = 0;
 
     for result in reader {
-        let record = result.map_err(|e| anyhow!("Failed to parse HEX record: {}", e))?;
+        let record =
+            result.map_err(|e| Error::Hex(format!("Failed to parse HEX record: {}", e)))?;
 
         match record {
             Record::ExtendedLinearAddress(ela) => {
@@ -106,7 +100,7 @@ fn assemble_segments(content: &str) -> Result<Vec<HexSegment>> {
     }
 
     if segments.is_empty() {
-        return Err(anyhow!("HEX file contains no data records"));
+        return Err(Error::Hex("HEX file contains no data records".into()));
     }
 
     Ok(segments)

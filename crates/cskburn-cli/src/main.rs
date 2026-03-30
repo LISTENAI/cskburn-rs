@@ -1,6 +1,5 @@
 use std::{borrow::Cow, fmt::Display, str::FromStr, time::Duration};
 
-mod hex;
 mod md5;
 mod types;
 
@@ -234,12 +233,11 @@ fn main() -> Result<()> {
             for spec in &args.files {
                 match spec {
                     FileSpec::Hex { path } => {
-                        for hex_image in hex::parse_hex(path, chip.base_addr())? {
+                        for hex_image in cskburn::hex::parse_hex(path, chip.base_addr())? {
                             let label = format!("{}@0x{:08x}", path, hex_image.addr);
 
                             let md5_fn: Md5Fn = Box::new({
-                                let hex_image = &hex_image;
-                                let md5 = hex_image.md5();
+                                let md5 = ::md5::compute(&hex_image.data).0;
                                 move || Ok(md5)
                             });
 
