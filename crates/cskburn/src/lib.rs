@@ -7,7 +7,7 @@ mod types;
 mod utils;
 mod writers;
 
-use commands::{ChipId, FlashInfo, Request};
+use commands::Request;
 use log::debug;
 use serialport::{ClearBuffer, SerialPort};
 use slip_codec::{SlipDecoder, SlipEncoder};
@@ -25,9 +25,10 @@ pub use error::Error;
 pub use family::Family;
 pub use types::{image::Image, region::Region, source::Source};
 
-use crate::{family::ChipProtocol, requests::TransferMode, writers::WriteIterator};
+use crate::{family::ChipProtocol, requests::TransferMode};
 
-pub use crate::writers::WriteTarget;
+pub use crate::commands::{ChipId, FlashInfo, MemoryAction};
+pub use crate::writers::{WriteIterator, WriteStep, WriteTarget};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
