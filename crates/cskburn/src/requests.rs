@@ -4,6 +4,7 @@ use super::{
 };
 use binrw::{BinRead, BinWrite, binread, binwrite, io::NoSeek};
 use log::{debug, trace};
+use serialport::ClearBuffer;
 use std::{
     cmp,
     fmt::Debug,
@@ -105,6 +106,8 @@ impl super::CSKBurn {
             req.checksum,
             req.data.len()
         );
+
+        self.port.clear(ClearBuffer::All)?;
 
         self.with_timeout(TIMEOUT_WRITE_DEFAULT, |s| {
             let mut writer = NoSeek::new(s);

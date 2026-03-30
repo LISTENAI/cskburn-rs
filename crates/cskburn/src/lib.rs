@@ -106,8 +106,8 @@ impl CSKBurn {
         Ok(())
     }
 
-    pub fn probe(&mut self, target: ProbeTarget, attempts: Option<usize>) -> Result<()> {
-        if target == ProbeTarget::Burner && self.port.baud_rate()? != BAUD_RATE_DEFAULT {
+    pub fn probe(&mut self, _target: ProbeTarget, attempts: Option<usize>) -> Result<()> {
+        if self.port.baud_rate()? != BAUD_RATE_DEFAULT {
             self.port.clear(ClearBuffer::All)?;
             self.port.set_baud_rate(BAUD_RATE_DEFAULT)?;
         }
