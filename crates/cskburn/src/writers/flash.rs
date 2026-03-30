@@ -1,4 +1,8 @@
-use crate::{commands::Request, utils, writers::WriteProtocol};
+use crate::{
+    commands::Request,
+    utils,
+    writers::{DEFAULT_DATA_RETRIES, WriteProtocol},
+};
 
 const FLASH_BLOCK_SIZE: usize = 4096;
 
@@ -13,6 +17,10 @@ impl FlashWriteOperation {
 impl WriteProtocol for FlashWriteOperation {
     fn block_size(&self) -> usize {
         FLASH_BLOCK_SIZE
+    }
+
+    fn data_retries(&self) -> usize {
+        DEFAULT_DATA_RETRIES
     }
 
     fn begin(&self, offset: u32, size: usize) -> Request {

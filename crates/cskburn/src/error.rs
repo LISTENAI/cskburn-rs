@@ -13,6 +13,16 @@ pub enum Error {
     Io(#[from] io::Error),
 }
 
+impl Error {
+    pub fn is_timeout(&self) -> bool {
+        match self {
+            Error::Io(e) => e.kind() == io::ErrorKind::TimedOut,
+            Error::SerialPort(e) => e.kind() == serialport::ErrorKind::Io(io::ErrorKind::TimedOut),
+            _ => false,
+        }
+    }
+}
+
 impl From<io::ErrorKind> for Error {
     fn from(err: io::ErrorKind) -> Self {
         Self::Io(err.into())

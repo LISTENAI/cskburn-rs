@@ -21,11 +21,17 @@ pub struct WriteStep {
     pub total_bytes: usize,
 }
 
+const DEFAULT_DATA_RETRIES: usize = 3;
+
 pub trait WriteProtocol {
     fn block_size(&self) -> usize;
     fn begin(&self, offset: u32, size: usize) -> Request;
     fn data<'a>(&self, seq: u32, data: &'a [u8]) -> Request<'a>;
     fn end(&self) -> Request;
+
+    fn data_retries(&self) -> usize {
+        0
+    }
 }
 
 pub enum WriteIteratorState {
@@ -81,20 +87,35 @@ impl<'a> Iterator for WriteIterator<'a> {
                     }
                 }
                 Ok(bytes_read) => {
-                    let req = self.protocol.data(seq, &self.buffer[..bytes_read]);
                     debug!("write data, seq: {}, size: {}", seq, bytes_read);
 
-                    match self.cskburn.command(req) {
-                        Ok(()) => {
-                            self.state = WriteIteratorState::Data { seq: seq + 1 };
-                            self.bytes_written += bytes_read;
-                            Some(Ok(WriteStep {
-                                bytes_written: self.bytes_written,
-                                total_bytes: self.total_bytes,
-                            }))
+                    let retries = self.protocol.data_retries();
+                    let mut last_err = None;
+
+                    for attempt in 0..=retries {
+                        if attempt > 0 {
+                            debug!("retry writing block {}, attempt {}", seq, attempt);
                         }
-                        Err(e) => Some(Err(e)),
+
+                        let req = self.protocol.data(seq, &self.buffer[..bytes_read]);
+                        match self.cskburn.command(req) {
+                            Ok(()) => {
+                                self.state = WriteIteratorState::Data { seq: seq + 1 };
+                                self.bytes_written += bytes_read;
+                                return Some(Ok(WriteStep {
+                                    bytes_written: self.bytes_written,
+                                    total_bytes: self.total_bytes,
+                                }));
+                            }
+                            Err(e) if e.is_timeout() && attempt < retries => {
+                                last_err = Some(e);
+                                continue;
+                            }
+                            Err(e) => return Some(Err(e)),
+                        }
                     }
+
+                    Some(Err(last_err.unwrap()))
                 }
                 Err(e) => Some(Err(Error::from(e))),
             },
