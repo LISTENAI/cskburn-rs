@@ -12,6 +12,6 @@ publish.workspace = true
 [dependencies]
 binrw = "0.15.0"
 log = { workspace = true }
-serialport = "4.7.2"
+serialport = ">=4.7, <5"
 slip-codec = "0.4.0"
 thiserror = "2.0.12"
