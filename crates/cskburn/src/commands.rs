@@ -208,10 +208,10 @@ impl Request<'_> {
             Request::FlashData { .. } => Some(TIMEOUT_FLASH_DATA),
             Request::FlashEnd { .. } => Some(TIMEOUT_FLASH_END),
             Request::EraseRegion { size, .. } => {
-                Some(TIMEOUT_FLASH_ERASE_PER_MB * (*size / 1024 / 1024) as u32)
+                Some(TIMEOUT_FLASH_ERASE_PER_MB * (*size / 1024 / 1024).max(1) as u32)
             }
             Request::FlashMd5 { size, .. } => {
-                Some(TIMEOUT_FLASH_MD5SUM_PER_MB * (*size / 1024 / 1024) as u32)
+                Some(TIMEOUT_FLASH_MD5SUM_PER_MB * (*size / 1024 / 1024).max(1) as u32)
             }
             _ => None,
         }
