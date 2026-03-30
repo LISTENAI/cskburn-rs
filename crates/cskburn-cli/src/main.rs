@@ -5,7 +5,7 @@ mod md5;
 mod types;
 
 use anyhow::{Result, anyhow};
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand};
 use console::Style;
 use cskburn::{CSKBurn, EraseTarget, Family, Image, ProbeTarget, Region, WriteTarget, list_ports};
 use dialoguer::Select;
@@ -39,10 +39,6 @@ struct Cli {
     /// Path to burner image to use, omit to use built-in
     burner: Option<String>,
 
-    /// Target to program
-    #[arg(short, long, value_enum, default_value = "flash")]
-    target: Target,
-
     /// Number of reset attempts during device probing
     #[arg(long, default_value_t = DEFAULT_RESET_ATTEMPTS)]
     reset_attempts: usize,
@@ -61,13 +57,6 @@ struct Cli {
 
     #[command(subcommand)]
     command: Commands,
-}
-
-#[derive(ValueEnum, Clone, Debug)]
-enum Target {
-    FLASH,
-    NAND,
-    RAM,
 }
 
 #[derive(Subcommand, Debug)]
