@@ -14,7 +14,9 @@ use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, trace};
 
 use crate::md5::Md5;
-use crate::types::{RegionToken, WriteEntry, parse_write_entries};
+use crate::types::{
+    RegionToken, VerifyEntry, WriteEntry, parse_verify_entries, parse_write_entries,
+};
 
 const DEFAULT_RESET_ATTEMPTS: usize = 5;
 const DEFAULT_SYNC_ATTEMPTS: usize = 3;
@@ -83,7 +85,7 @@ enum Commands {
     /// Erase regions of flash, or the whole chip via `erase chip`
     Erase(EraseArgs),
 
-    /// Read MD5 from regions of flash, or the whole chip via `verify chip`
+    /// Verify regions or written files against device-side MD5
     Verify(VerifyArgs),
 }
 
@@ -126,15 +128,21 @@ struct EraseArgs {
 
 #[derive(Args, Debug)]
 struct VerifyArgs {
-    /// Regions to read MD5 from: either `chip` for the whole flash, or one or
-    /// more `<addr>+<size>` ranges, e.g.
-    ///   cskburn ... verify 0x0+4K 0x100000+1M
+    /// What to verify. Three shapes (not mixable in one command):
+    ///
+    /// - region tokens (`chip` or `<addr>+<size>`): dump device-side MD5
+    ///     cskburn ... verify chip
+    ///     cskburn ... verify 0x0+4K 0x100000+1M
+    /// - `<addr> <file>` pairs: compare against local file MD5
+    ///     cskburn ... verify 0x0 app.bin 0x100000 res.bin
+    /// - `<file>.hex` files: compare against each HEX segment's MD5
+    ///     cskburn ... verify app.hex
     ///
     /// Address and size formats: hex (`0x100000`), decimal (`1048576`), or
     /// decimal with a 1024-based unit suffix (`1M`, `4K`, `1G`). Underscores
     /// allowed as separators.
-    #[arg(value_name = "REGIONS", required = true, verbatim_doc_comment)]
-    regions: Vec<RegionToken>,
+    #[arg(value_name = "ENTRIES", required = true, verbatim_doc_comment)]
+    entries: Vec<String>,
 }
 
 fn main() -> ExitCode {
@@ -448,22 +456,80 @@ fn run(cli: Cli) -> Result<()> {
             }
         }
         Commands::Verify(args) => {
-            for token in &args.regions {
-                if let RegionToken::Range { addr, size } = token {
-                    validate_bounds(*addr, *size, flash_size, "verify region")?;
+            let entries = parse_verify_entries(&args.entries).map_err(Error::ArgInvalid)?;
+
+            // Resolve each entry to (label, region, optional expected MD5).
+            // None expected → MD5-dump only; Some → compare and bail on
+            // mismatch.
+            let mut targets: Vec<(String, Region, Option<[u8; 16]>)> = Vec::new();
+            for entry in entries {
+                match entry {
+                    VerifyEntry::Region(RegionToken::Chip) => {
+                        let region = Region {
+                            addr: 0,
+                            size: flash_size as u32,
+                        };
+                        targets.push(("chip".to_string(), region, None));
+                    }
+                    VerifyEntry::Region(RegionToken::Range { addr, size }) => {
+                        let region = Region { addr, size };
+                        targets.push((format!("{}", region), region, None));
+                    }
+                    VerifyEntry::Raw { addr, path } => {
+                        let path_str = path.to_string_lossy().to_string();
+                        let data = std::fs::read(&path).map_err(|e| Error::FileReadFailed {
+                            path: path_str.clone(),
+                            source: e,
+                        })?;
+                        let expected = ::md5::compute(&data).0;
+                        let region = Region {
+                            addr,
+                            size: data.len() as u32,
+                        };
+                        targets.push((
+                            format!("0x{:08x} {}", addr, path_str),
+                            region,
+                            Some(expected),
+                        ));
+                    }
+                    VerifyEntry::Hex { path } => {
+                        let path_str = path.to_string_lossy().to_string();
+                        for image in cskburn::hex::parse_hex(&path_str, chip.base_addr())? {
+                            let expected = ::md5::compute(&image.data).0;
+                            let region = Region {
+                                addr: image.addr,
+                                size: image.data.len() as u32,
+                            };
+                            targets.push((
+                                format!("{}@0x{:08x}", path_str, image.addr),
+                                region,
+                                Some(expected),
+                            ));
+                        }
+                    }
                 }
             }
 
-            for token in args.regions {
-                let region = match token {
-                    RegionToken::Chip => Region {
-                        addr: 0,
-                        size: flash_size as u32,
-                    },
-                    RegionToken::Range { addr, size } => Region { addr, size },
-                };
-                let md5 = cskburn.flash_verify(region)?;
-                println!("{:02x?}", md5);
+            for (label, region, _) in &targets {
+                validate_bounds(region.addr, region.size, flash_size, label)?;
+            }
+
+            for (label, region, expected) in targets {
+                let actual = cskburn.flash_verify(region)?;
+                match expected {
+                    Some(exp) => {
+                        if exp != actual {
+                            return Err(Error::VerifyMismatch {
+                                expected: exp,
+                                actual,
+                            });
+                        }
+                        print_step("Verified", format!("{}: {}", label, Md5(actual)));
+                    }
+                    None => {
+                        print_line(label, format!("{}", Md5(actual)));
+                    }
+                }
             }
         }
     }
