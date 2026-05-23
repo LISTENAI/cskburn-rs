@@ -26,15 +26,15 @@ const FLASH_ALIGN: u32 = 4096;
 #[command(version, author, about, long_about)]
 struct Cli {
     /// Path to serial device
-    #[arg(short, long)]
+    #[arg(short, long, env = "CSKBURN_PORT")]
     port: Option<String>,
 
     /// Baud rate
-    #[arg(short, long, default_value = "1500000")]
+    #[arg(short, long, default_value = "1500000", env = "CSKBURN_BAUD")]
     baud: u32,
 
     /// Chip family [possible values: venus, mars, arcs, venusa]
-    #[arg(short = 'C', long)]
+    #[arg(short = 'C', long, env = "CSKBURN_CHIP")]
     chip: String,
 
     /// Path to a burner image to use; omit to use the built-in
