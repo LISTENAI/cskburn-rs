@@ -54,12 +54,18 @@ pub enum MemoryAction {
 #[br(little)]
 #[derive(Debug)]
 pub struct FlashInfo {
-    #[br(assert(id != [0x00, 0x00, 0x00] && id != [0xFF, 0xFF, 0xFF]))]
+    // id[2] is the JEDEC capacity byte (log2 of size). Reject obvious
+    // junk (all-zero, all-FF) and out-of-range capacities, so size() is
+    // always safe to compute — 16 covers 64 KiB, 31 covers 2 GiB.
+    #[br(assert(
+        id != [0x00, 0x00, 0x00] && id != [0xFF, 0xFF, 0xFF] && (16..=31).contains(&id[2])
+    ))]
     pub id: [u8; 3],
 }
 
 impl FlashInfo {
     pub fn size(&self) -> usize {
+        // id[2] is in [16, 31] by construction (see binread assert above).
         2 << (self.id[2] - 1)
     }
 }
