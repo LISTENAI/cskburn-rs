@@ -6,7 +6,9 @@ mod types;
 use anyhow::{Result, anyhow};
 use clap::{Args, Parser, Subcommand};
 use console::Style;
-use cskburn::{CSKBurn, EraseTarget, Family, Image, ProbeTarget, Region, WriteTarget, list_ports};
+use cskburn::{
+    CSKBurn, ChipId, EraseTarget, Family, Image, ProbeTarget, Region, WriteTarget, list_ports,
+};
 use dialoguer::Select;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, trace};
@@ -203,7 +205,7 @@ fn main() -> Result<()> {
     let chip_id = cskburn
         .chip_id()
         .map_err(|e| anyhow!("Failed to read chip ID: {}", e))?;
-    print_line("chip-id", format!("{}", chip_id));
+    print_line("chip-id", format_chip_id(&chip_id, chip));
 
     let flash_id = cskburn
         .flash_info()
@@ -480,6 +482,13 @@ fn validate_bounds(addr: u32, size: u32, flash_size: u64, label: &str) -> Result
         ));
     }
     Ok(())
+}
+
+fn format_chip_id(chip_id: &ChipId, family: Family) -> String {
+    match family {
+        Family::ARCS => format!("{:x}", chip_id),
+        _ => format!("{:X}", chip_id),
+    }
 }
 
 fn format_size(bytes: u64) -> String {

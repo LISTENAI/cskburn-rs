@@ -89,8 +89,23 @@ pub struct ChipId([u8; 8]);
 
 impl fmt::Display for ChipId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::UpperHex::fmt(self, f)
+    }
+}
+
+impl fmt::UpperHex for ChipId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for byte in &self.0 {
             write!(f, "{:02X}", byte)?;
+        }
+        Ok(())
+    }
+}
+
+impl fmt::LowerHex for ChipId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for byte in &self.0 {
+            write!(f, "{:02x}", byte)?;
         }
         Ok(())
     }
