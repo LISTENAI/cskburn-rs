@@ -24,7 +24,7 @@ impl Into<Image> for HexSegment {
 /// subtracted to produce flash-relative offsets.
 pub fn parse_hex(path: &str, base_addr: u32) -> Result<Vec<HexSegment>> {
     let content = read_to_string(path)
-        .map_err(|e| Error::Hex(format!("Failed to read HEX file {}: {}", path, e)))?;
+        .map_err(|e| Error::HexParseFailed(format!("Failed to read HEX file {}: {}", path, e)))?;
 
     let segments = assemble_segments(&content)?;
 
@@ -33,7 +33,7 @@ pub fn parse_hex(path: &str, base_addr: u32) -> Result<Vec<HexSegment>> {
         .map(|seg| {
             let HexSegment { addr, data } = seg;
             let addr = addr.checked_sub(base_addr).ok_or_else(|| {
-                Error::Hex(format!(
+                Error::HexParseFailed(format!(
                     "HEX address 0x{:08x} is below chip base address 0x{:08x}",
                     addr, base_addr
                 ))
@@ -60,8 +60,8 @@ fn assemble_segments(content: &str) -> Result<Vec<HexSegment>> {
     let mut upper_addr: u32 = 0;
 
     for result in reader {
-        let record =
-            result.map_err(|e| Error::Hex(format!("Failed to parse HEX record: {}", e)))?;
+        let record = result
+            .map_err(|e| Error::HexParseFailed(format!("Failed to parse HEX record: {}", e)))?;
 
         match record {
             Record::ExtendedLinearAddress(ela) => {
@@ -100,7 +100,9 @@ fn assemble_segments(content: &str) -> Result<Vec<HexSegment>> {
     }
 
     if segments.is_empty() {
-        return Err(Error::Hex("HEX file contains no data records".into()));
+        return Err(Error::HexParseFailed(
+            "HEX file contains no data records".into(),
+        ));
     }
 
     Ok(segments)

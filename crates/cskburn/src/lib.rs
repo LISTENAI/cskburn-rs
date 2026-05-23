@@ -1,4 +1,5 @@
 mod commands;
+mod errno;
 mod error;
 mod family;
 #[cfg(feature = "hex")]
@@ -23,6 +24,7 @@ use std::{
     time::Duration,
 };
 
+pub use errno::ErrorCode;
 pub use error::Error;
 pub use family::{Family, ResetStrategy};
 pub use types::{image::Image, region::Region, source::Source};
@@ -43,25 +45,50 @@ pub struct CSKBurnBuilder {
     chip: Family,
 }
 
-pub fn list_ports() -> Result<Vec<String>> {
-    serialport::available_ports()
-        .map_err(Error::from)
-        .map(|ports| {
-            ports
-                .into_iter()
-                .filter_map(|port| {
-                    if cfg!(target_os = "macos") && !port.port_name.starts_with("/dev/cu.") {
-                        return None;
-                    }
+fn classify_serial_open_error(path: &str, e: serialport::Error) -> Error {
+    use serialport::ErrorKind;
+    match e.kind() {
+        ErrorKind::NoDevice => Error::SerialNotFound(path.to_string()),
+        ErrorKind::Io(io::ErrorKind::PermissionDenied) => {
+            Error::SerialAccessDenied(path.to_string())
+        }
+        // serialport doesn't have a dedicated kind for "port busy" — both Linux
+        // (EBUSY) and Windows (ERROR_ACCESS_DENIED with file in use) surface
+        // platform-specific kinds. Probe the description as a fallback for the
+        // common "already open" cases.
+        _ if {
+            let msg = e.to_string().to_lowercase();
+            msg.contains("busy") || msg.contains("in use") || msg.contains("resource")
+        } =>
+        {
+            Error::SerialBusy(path.to_string())
+        }
+        _ => Error::SerialOpenFailed {
+            path: path.to_string(),
+            source: e,
+        },
+    }
+}
 
-                    if let serialport::SerialPortType::UsbPort(_) = port.port_type {
-                        Some(port.port_name)
-                    } else {
-                        None
-                    }
-                })
-                .collect()
+pub fn list_ports() -> Result<Vec<String>> {
+    let ports = serialport::available_ports().map_err(|e| Error::SerialOpenFailed {
+        path: "<enumeration>".to_string(),
+        source: e,
+    })?;
+    Ok(ports
+        .into_iter()
+        .filter_map(|port| {
+            if cfg!(target_os = "macos") && !port.port_name.starts_with("/dev/cu.") {
+                return None;
+            }
+
+            if let serialport::SerialPortType::UsbPort(_) = port.port_type {
+                Some(port.port_name)
+            } else {
+                None
+            }
         })
+        .collect())
 }
 
 pub struct CSKBurn {
@@ -107,7 +134,8 @@ impl CSKBurn {
         let port = serialport::new(path, BAUD_RATE_DEFAULT)
             .flow_control(serialport::FlowControl::None)
             .dtr_on_open(false)
-            .open()?;
+            .open()
+            .map_err(|e| classify_serial_open_error(path, e))?;
 
         let protocol = chip.protocol();
 
@@ -137,7 +165,8 @@ impl CSKBurn {
     ) -> Result<()> {
         let strategy = strategy.unwrap_or_else(|| self.protocol.reset_candidates()[0]);
         self.protocol
-            .reset(self.port.as_mut(), strategy, boot_mode, reset_interval)?;
+            .reset(self.port.as_mut(), strategy, boot_mode, reset_interval)
+            .map_err(Error::ResetPinFailed)?;
         Ok(())
     }
 
@@ -148,7 +177,7 @@ impl CSKBurn {
         self.protocol.reset_candidates()
     }
 
-    pub fn probe(&mut self, _target: ProbeTarget, attempts: Option<usize>) -> Result<()> {
+    pub fn probe(&mut self, target: ProbeTarget, attempts: Option<usize>) -> Result<()> {
         if self.port.baud_rate()? != BAUD_RATE_DEFAULT {
             self.port.clear(ClearBuffer::All)?;
             self.port.set_baud_rate(BAUD_RATE_DEFAULT)?;
@@ -159,21 +188,30 @@ impl CSKBurn {
             debug!("adaptive duplex mode: {:?}", mode);
 
             if mode == TransferMode::HalfDuplex {
-                return Err(Error::Io(io::Error::new(
-                    io::ErrorKind::Unsupported,
-                    "Half-duplex mode is not currently support in this version",
-                )));
+                unimplemented!(
+                    "Half-duplex transfer mode (CSK506x ROM) is not implemented in this build"
+                );
             }
 
             sleep(Duration::from_millis(100));
         }
 
-        self.sync(attempts)?;
+        // Initial sync. ROM stage uses 4001 (PROBE_NO_SYNC); burner stage
+        // uses 5004 (BURNER_NO_RESPONSE).
+        self.sync(attempts).map_err(|_| match target {
+            ProbeTarget::ROM => Error::ProbeNoSync,
+            ProbeTarget::Burner => Error::BurnerNoResponse,
+        })?;
 
         if self.baud != BAUD_RATE_DEFAULT && self.protocol.rom_supports_change_baudrate() {
-            let _: () = self.command(Request::ChangeBaudrate {
+            // ChangeBaudrate command: ROM stage uses 5001, burner stage 5005.
+            self.command::<()>(Request::ChangeBaudrate {
                 to: self.baud,
                 from: BAUD_RATE_DEFAULT,
+            })
+            .map_err(|_| match target {
+                ProbeTarget::ROM => Error::RomBaudRejected,
+                ProbeTarget::Burner => Error::BaudRejected,
             })?;
             self.port.clear(ClearBuffer::All)?;
             // ROM accepted the new baud, but the host driver may still refuse
@@ -182,9 +220,13 @@ impl CSKBurn {
             // caller can bail instead of looping through reset attempts.
             self.port
                 .set_baud_rate(self.baud)
-                .map_err(|_| Error::BaudRateUnsupported(self.baud))?;
+                .map_err(|_| Error::SerialBaudUnsupported(self.baud))?;
 
-            self.sync(attempts)?;
+            // Sync after baud change: ROM stage uses 5002, burner stage 5006.
+            self.sync(attempts).map_err(|_| match target {
+                ProbeTarget::ROM => Error::RomSyncLost,
+                ProbeTarget::Burner => Error::BaudSyncLost,
+            })?;
         }
 
         Ok(())
@@ -207,7 +249,16 @@ impl CSKBurn {
         if let Some(info) = self.flash_info {
             return Ok(info);
         }
-        let info: FlashInfo = self.command(Request::ReadFlashId)?;
+        let info: FlashInfo = match self.command(Request::ReadFlashId) {
+            Ok(info) => info,
+            // FlashInfo's binread assert flags all-zero/all-FF/out-of-range
+            // capacity bytes by translating to InvalidData. That's
+            // semantically "no flash present" rather than a comms failure.
+            Err(Error::Io(e)) if e.kind() == io::ErrorKind::InvalidData => {
+                return Err(Error::FlashNotDetected);
+            }
+            Err(e) => return Err(e.wrap_as(Error::FlashIdReadFailed)),
+        };
         self.flash_info = Some(info);
         Ok(info)
     }
@@ -222,7 +273,8 @@ impl CSKBurn {
         let id = if self.chip == Family::MARS {
             ChipId::empty()
         } else {
-            self.command(Request::ReadChipId)?
+            self.command(Request::ReadChipId)
+                .map_err(|e| e.wrap_as(Error::ChipIdReadFailed))?
         };
         self.chip_id = Some(id);
         Ok(id)
@@ -251,6 +303,7 @@ impl CSKBurn {
             offset: region.addr,
             size: region.size,
         })
+        .map_err(|e| e.wrap_as(Error::VerifyReadFailed))
     }
 
     pub fn flash_erase(&mut self, target: EraseTarget) -> Result<()> {
@@ -264,11 +317,14 @@ impl CSKBurn {
                 let mb = (flash_size / 1024 / 1024).max(1);
                 let timeout = TIMEOUT_FLASH_ERASE_PER_MB * mb;
                 self.command_with_timeout(Request::EraseFlash, timeout)
+                    .map_err(|e| e.wrap_as(Error::FlashEraseFailed))
             }
-            EraseTarget::Region(region) => self.command(Request::EraseRegion {
-                offset: region.addr,
-                size: region.size,
-            }),
+            EraseTarget::Region(region) => self
+                .command(Request::EraseRegion {
+                    offset: region.addr,
+                    size: region.size,
+                })
+                .map_err(|e| e.wrap_as(Error::FlashEraseFailed)),
         }
     }
 }

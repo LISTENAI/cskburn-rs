@@ -15,6 +15,16 @@ pub enum WriteTarget {
     Flash,
 }
 
+impl WriteTarget {
+    /// Map a write-time failure to the appropriate categorized error.
+    fn wrap_err(&self, e: Error) -> Error {
+        match self {
+            WriteTarget::Flash => e.wrap_as(Error::FlashWriteFailed),
+            WriteTarget::Memory { .. } => e.wrap_as(Error::RamWriteFailed),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct WriteStep {
     pub bytes_written: usize,
@@ -44,6 +54,7 @@ pub struct WriteIterator<'a> {
     cskburn: &'a mut CSKBurn,
     source: &'a mut Image,
     protocol: Box<dyn WriteProtocol>,
+    target: WriteTarget,
     state: WriteIteratorState,
     buffer: Vec<u8>,
     bytes_written: usize,
@@ -70,7 +81,7 @@ impl<'a> Iterator for WriteIterator<'a> {
                             total_bytes: self.total_bytes,
                         }))
                     }
-                    Err(e) => Some(Err(e)),
+                    Err(e) => Some(Err(self.target.wrap_err(e))),
                 }
             }
             WriteIteratorState::Data { seq } => match self.source.source.read(&mut self.buffer) {
@@ -86,7 +97,7 @@ impl<'a> Iterator for WriteIterator<'a> {
                                 total_bytes: self.total_bytes,
                             }))
                         }
-                        Err(e) => Some(Err(e)),
+                        Err(e) => Some(Err(self.target.wrap_err(e))),
                     }
                 }
                 Ok(bytes_read) => {
@@ -114,12 +125,15 @@ impl<'a> Iterator for WriteIterator<'a> {
                                 last_err = Some(e);
                                 continue;
                             }
-                            Err(e) => return Some(Err(e)),
+                            Err(e) => return Some(Err(self.target.wrap_err(e))),
                         }
                     }
 
-                    Some(Err(last_err.unwrap()))
+                    Some(Err(self.target.wrap_err(last_err.unwrap())))
                 }
+                // Reading from the local source (file backing the image) failed.
+                // We don't have the file path here, so map to a bare I/O error
+                // — the caller has the path context and should report it.
                 Err(e) => Some(Err(Error::from(e))),
             },
             WriteIteratorState::End => None,
@@ -133,8 +147,8 @@ impl<'a> WriteIterator<'a> {
         source: &'a mut Image,
         target: WriteTarget,
     ) -> Result<Self> {
-        let protocol: Box<dyn WriteProtocol> = match target {
-            WriteTarget::Memory { action } => Box::new(MemoryWriteOperation::new(action)),
+        let protocol: Box<dyn WriteProtocol> = match &target {
+            WriteTarget::Memory { action } => Box::new(MemoryWriteOperation::new(action.clone())),
             WriteTarget::Flash => Box::new(FlashWriteOperation::new()),
         };
 
@@ -146,6 +160,7 @@ impl<'a> WriteIterator<'a> {
             cskburn,
             source,
             protocol,
+            target,
             state: WriteIteratorState::Begin,
             buffer,
             bytes_written: 0,
