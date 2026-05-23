@@ -23,13 +23,10 @@ impl FromStr for RegionSpec {
             return Err("Invalid number of parts");
         }
 
-        let addr = utils::parse_addr(parts[0]).map_err(|_| "Invalid addr format")?;
-        let size = utils::parse_addr(parts[1]).map_err(|_| "Invalid size format")?;
+        let addr = utils::parse_u32(parts[0]).map_err(|_| "Invalid addr format")?;
+        let size = utils::parse_u32(parts[1]).map_err(|_| "Invalid size format")?;
 
-        Ok(Self(Region {
-            addr,
-            size: size as u32,
-        }))
+        Ok(Self(Region { addr, size }))
     }
 }
 

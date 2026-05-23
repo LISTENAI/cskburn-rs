@@ -53,7 +53,7 @@ impl FromStr for FileSpec {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         // Try parsing as ADDR:FILE first
         if let Some((addr_str, path)) = s.split_once(':') {
-            if let Ok(addr) = utils::parse_addr(addr_str) {
+            if let Ok(addr) = utils::parse_u32(addr_str) {
                 return Ok(FileSpec::Raw {
                     addr,
                     path: path.to_string(),

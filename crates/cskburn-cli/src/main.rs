@@ -93,8 +93,9 @@ enum Commands {
 struct WriteArgs {
     /// Files to write, in the format ADDR:FILE
     ///
-    /// ADDR - The offset to write the file to, can be in either decimal (e.g.
-    ///        1048576) or hexadecimal (e.g. 0x100000).
+    /// ADDR - The offset to write the file to. Accepts hex (`0x100000`),
+    ///        decimal (`1048576`), or decimal with a 1024-based unit suffix
+    ///        (`1M`, `4K`, `1G`). Underscores allowed as separators.
     /// FILE - The path to the file to write.
     #[arg(value_name = "ADDR:FILE", required = true, verbatim_doc_comment)]
     files: Vec<FileSpec>,
@@ -112,10 +113,9 @@ struct WriteArgs {
 struct EraseArgs {
     /// Regions to erase, in the format ADDR:SIZE
     ///
-    /// ADDR - The offset to start erasing at, can be in either decimal (e.g.
-    ///       1048576) or hexadecimal (e.g. 0x100000).
-    /// SIZE - The size of the region to erase, can be in either decimal (e.g.
-    ///       1048576) or hexadecimal (e.g. 0x100000).
+    /// ADDR and SIZE accept hex (`0x100000`), decimal (`1048576`), or decimal
+    /// with a 1024-based unit suffix (`1M`, `4K`, `1G`). Underscores allowed
+    /// as separators.
     #[arg(value_name = "ADDR:SIZE", required = true, verbatim_doc_comment)]
     regions: Vec<RegionSpec>,
 }
@@ -124,10 +124,9 @@ struct EraseArgs {
 struct VerifyArgs {
     /// Regions to verify, in the format ADDR:SIZE
     ///
-    /// ADDR - The offset to start erasing at, can be in either decimal (e.g.
-    ///       1048576) or hexadecimal (e.g. 0x100000).
-    /// SIZE - The size of the region to erase, can be in either decimal (e.g.
-    ///       1048576) or hexadecimal (e.g. 0x100000).
+    /// ADDR and SIZE accept hex (`0x100000`), decimal (`1048576`), or decimal
+    /// with a 1024-based unit suffix (`1M`, `4K`, `1G`). Underscores allowed
+    /// as separators.
     #[arg(value_name = "ADDR:SIZE", required = true, verbatim_doc_comment)]
     regions: Vec<RegionSpec>,
 }
