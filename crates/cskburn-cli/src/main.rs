@@ -7,7 +7,8 @@ use anyhow::{Result, anyhow};
 use clap::{Args, Parser, Subcommand};
 use console::Style;
 use cskburn::{
-    CSKBurn, ChipId, EraseTarget, Family, Image, ProbeTarget, Region, WriteTarget, list_ports,
+    CSKBurn, ChipId, EraseTarget, Family, Image, ProbeTarget, Region, ResetStrategy, WriteTarget,
+    list_ports,
 };
 use dialoguer::Select;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -51,6 +52,20 @@ struct Cli {
     /// Reset pulse duration in milliseconds
     #[arg(long, default_value_t = DEFAULT_RESET_DELAY)]
     reset_delay: u64,
+
+    /// Reset strategy describing how DTR/RTS map to BOOT/RESET.
+    ///
+    /// auto         — pick by chip; for ARCS alternates dtr-boot and dual-npn
+    ///                across retries.
+    /// dtr-boot     — DTR -> BOOT, RTS -> RESET (BOOT active low).
+    ///                Typical: LS26 ARCS-MINI.
+    /// rts-boot     — RTS -> BOOT, DTR -> RESET (BOOT active low).
+    ///                Typical: CSK4 / CSK6 default.
+    /// rts-boot-inv — same as rts-boot but BOOT is active high.
+    /// dual-npn     — cross-coupled NPN pair (S8050).
+    ///                Typical: LS26 ARCS-EVB.
+    #[arg(long, default_value = "auto", value_parser = parse_reset_strategy_arg, verbatim_doc_comment)]
+    reset_strategy: ResetStrategyArg,
 
     /// Disable progress bars and spinners
     #[arg(long)]
@@ -150,18 +165,31 @@ fn main() -> Result<()> {
 
     let reset_interval = Duration::from_millis(cli.reset_delay);
 
+    let candidates: Vec<ResetStrategy> = match cli.reset_strategy {
+        ResetStrategyArg::Auto => cskburn.reset_candidates().to_vec(),
+        ResetStrategyArg::Fixed(s) => vec![s],
+    };
+
+    // Remember which strategy got us in, so the post-burn reset uses the same
+    // wiring as the one that succeeded.
+    let mut effective_strategy = candidates[0];
+
     let mut success = false;
-    for attempts in 0..cli.reset_attempts {
-        if attempts > 0 {
+    for attempt in 0..cli.reset_attempts {
+        let strategy = candidates[attempt % candidates.len()];
+        effective_strategy = strategy;
+
+        if attempt > 0 {
             progress.set_prefix(format!(
-                "reset attempt {}/{}",
-                attempts + 1,
-                cli.reset_attempts
+                "reset attempt {}/{} ({:?})",
+                attempt + 1,
+                cli.reset_attempts,
+                strategy
             ));
         }
 
         cskburn
-            .reset(true, Some(reset_interval))
+            .reset(Some(strategy), true, Some(reset_interval))
             .map_err(|e| anyhow!("Failed to reset device: {}", e))?;
 
         match cskburn.probe(ProbeTarget::ROM, Some(cli.sync_attempts)) {
@@ -383,7 +411,7 @@ fn main() -> Result<()> {
     // Reset the device to exit burner mode
 
     cskburn
-        .reset(false, Some(reset_interval))
+        .reset(Some(effective_strategy), false, Some(reset_interval))
         .map_err(|e| anyhow!("Failed to reset device: {}", e))?;
 
     Ok(())
@@ -486,6 +514,24 @@ fn validate_bounds(addr: u32, size: u32, flash_size: u64, label: &str) -> Result
         ));
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ResetStrategyArg {
+    Auto,
+    Fixed(ResetStrategy),
+}
+
+fn parse_reset_strategy_arg(s: &str) -> Result<ResetStrategyArg, String> {
+    if s == "auto" {
+        return Ok(ResetStrategyArg::Auto);
+    }
+    ResetStrategy::from_str(s).map(ResetStrategyArg::Fixed).map_err(|_| {
+        format!(
+            "unknown reset strategy '{}', expected one of: auto, dtr-boot, rts-boot, rts-boot-inv, dual-npn",
+            s
+        )
+    })
 }
 
 fn format_chip_id(chip_id: &ChipId, family: Family) -> String {

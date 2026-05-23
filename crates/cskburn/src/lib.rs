@@ -24,7 +24,7 @@ use std::{
 };
 
 pub use error::Error;
-pub use family::Family;
+pub use family::{Family, ResetStrategy};
 pub use types::{image::Image, region::Region, source::Source};
 
 use crate::{family::ChipProtocol, requests::TransferMode};
@@ -122,10 +122,26 @@ impl CSKBurn {
         })
     }
 
-    pub fn reset(&mut self, boot_mode: bool, reset_interval: Option<Duration>) -> Result<()> {
+    /// Reset the device. Pass `None` for the strategy to use the chip's
+    /// default (first candidate); pass `Some(...)` to force a specific reset
+    /// circuit topology.
+    pub fn reset(
+        &mut self,
+        strategy: Option<ResetStrategy>,
+        boot_mode: bool,
+        reset_interval: Option<Duration>,
+    ) -> Result<()> {
+        let strategy = strategy.unwrap_or_else(|| self.protocol.reset_candidates()[0]);
         self.protocol
-            .reset(self.port.as_mut(), boot_mode, reset_interval)?;
+            .reset(self.port.as_mut(), strategy, boot_mode, reset_interval)?;
         Ok(())
+    }
+
+    /// Reset strategies known to work on production boards for this chip,
+    /// ordered with the most common one first. Useful for callers that want
+    /// to cycle through candidates across retries.
+    pub fn reset_candidates(&self) -> &'static [ResetStrategy] {
+        self.protocol.reset_candidates()
     }
 
     pub fn probe(&mut self, _target: ProbeTarget, attempts: Option<usize>) -> Result<()> {

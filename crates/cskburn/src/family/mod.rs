@@ -1,12 +1,14 @@
-use std::{io::Cursor, str::FromStr, thread::sleep, time::Duration};
+use std::{io::Cursor, str::FromStr, time::Duration};
 
-use log::trace;
 use serialport::SerialPort;
 
 mod arcs;
 mod mars;
+mod reset;
 mod venus;
 mod venusa;
+
+pub use reset::ResetStrategy;
 
 use crate::{
     Image,
@@ -16,28 +18,25 @@ use crate::{
 };
 
 pub trait ChipProtocol {
+    /// Run the reset sequence using the given strategy. Chips with a custom
+    /// reset sequence (e.g. those without a BOOT pin) may override this and
+    /// ignore the strategy.
     fn reset(
         &self,
         port: &mut dyn SerialPort,
+        strategy: ResetStrategy,
         boot_mode: bool,
         reset_interval: Option<Duration>,
     ) -> Result<(), std::io::Error> {
-        let reset_interval = reset_interval.unwrap_or(Duration::from_millis(100));
+        let reset_delay = reset_interval.unwrap_or(Duration::from_millis(100));
+        strategy.apply(port, boot_mode, reset_delay)
+    }
 
-        trace!("set RTS: {}", boot_mode);
-        port.write_request_to_send(boot_mode)?;
-
-        trace!("set DTR: {}", true);
-        port.write_data_terminal_ready(true)?;
-
-        sleep(reset_interval);
-
-        trace!("set DTR: {}", false);
-        port.write_data_terminal_ready(false)?;
-
-        sleep(reset_interval);
-
-        Ok(())
+    /// Reset strategies known to work on production boards for this chip. The
+    /// first entry is the default; the rest are alternates that auto-mode
+    /// cycles through.
+    fn reset_candidates(&self) -> &'static [ResetStrategy] {
+        &[ResetStrategy::RtsBoot]
     }
 
     fn rom_supports_change_baudrate(&self) -> bool {
