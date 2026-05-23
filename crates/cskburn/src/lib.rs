@@ -9,7 +9,7 @@ mod types;
 mod utils;
 mod writers;
 
-use commands::Request;
+use commands::{Request, TIMEOUT_FLASH_ERASE_PER_MB};
 use log::debug;
 use serialport::{ClearBuffer, SerialPort};
 use slip_codec::{SlipDecoder, SlipEncoder};
@@ -74,6 +74,8 @@ pub struct CSKBurn {
     slip_dec: SlipDecoder,
     slip_dec_buf: Cursor<Vec<u8>>,
     cancel: Option<Arc<AtomicBool>>,
+    flash_info: Option<FlashInfo>,
+    chip_id: Option<ChipId>,
 }
 
 #[derive(PartialEq)]
@@ -119,6 +121,8 @@ impl CSKBurn {
             slip_dec: SlipDecoder::new(),
             slip_dec_buf: Cursor::new(Vec::new()),
             cancel: None,
+            flash_info: None,
+            chip_id: None,
         })
     }
 
@@ -197,16 +201,31 @@ impl CSKBurn {
         Err(io::ErrorKind::TimedOut.into())
     }
 
+    /// Read the JEDEC flash info from the device. The result is cached on
+    /// the first successful call; subsequent calls return the cached value.
     pub fn flash_info(&mut self) -> Result<FlashInfo> {
-        self.command(Request::ReadFlashId)
+        if let Some(info) = self.flash_info {
+            return Ok(info);
+        }
+        let info: FlashInfo = self.command(Request::ReadFlashId)?;
+        self.flash_info = Some(info);
+        Ok(info)
     }
 
+    /// Read the device's chip ID. The result is cached on the first
+    /// successful call; subsequent calls return the cached value. Returns an
+    /// empty ID on families that don't report one (e.g. MARS).
     pub fn chip_id(&mut self) -> Result<ChipId> {
-        if self.chip == Family::MARS {
-            return Ok(ChipId::empty());
+        if let Some(id) = self.chip_id {
+            return Ok(id);
         }
-
-        self.command(Request::ReadChipId)
+        let id = if self.chip == Family::MARS {
+            ChipId::empty()
+        } else {
+            self.command(Request::ReadChipId)?
+        };
+        self.chip_id = Some(id);
+        Ok(id)
     }
 
     pub fn write(&mut self, source: &mut Image, target: WriteTarget) -> Result<usize> {
@@ -237,7 +256,15 @@ impl CSKBurn {
     pub fn flash_erase(&mut self, target: EraseTarget) -> Result<()> {
         self.check_cancelled()?;
         match target {
-            EraseTarget::Entire => self.command(Request::EraseFlash),
+            EraseTarget::Entire => {
+                // Full-chip erase has no fixed duration — scale the read
+                // timeout by the actual flash size. flash_info() caches its
+                // result, so the round-trip is paid at most once.
+                let flash_size = self.flash_info()?.size() as u32;
+                let mb = (flash_size / 1024 / 1024).max(1);
+                let timeout = TIMEOUT_FLASH_ERASE_PER_MB * mb;
+                self.command_with_timeout(Request::EraseFlash, timeout)
+            }
             EraseTarget::Region(region) => self.command(Request::EraseRegion {
                 offset: region.addr,
                 size: region.size,

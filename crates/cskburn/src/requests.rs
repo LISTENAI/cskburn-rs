@@ -87,10 +87,34 @@ impl super::CSKBurn {
     where
         T: TryFrom<ResponseEnvelope>,
     {
+        self.command_inner(request, None)
+    }
+
+    /// Like [`command`] but overrides the read timeout. Useful for commands
+    /// whose duration is not encoded in the request itself (e.g. full-chip
+    /// erase, where the host knows the flash size but the wire format does
+    /// not).
+    pub fn command_with_timeout<T>(&mut self, request: Request, timeout: Duration) -> Result<T>
+    where
+        T: TryFrom<ResponseEnvelope>,
+    {
+        self.command_inner(request, Some(timeout))
+    }
+
+    fn command_inner<T>(
+        &mut self,
+        request: Request,
+        timeout_override: Option<Duration>,
+    ) -> Result<T>
+    where
+        T: TryFrom<ResponseEnvelope>,
+    {
         trace!("{:02x?}", request);
 
         let read_timeout = cmp::max(
-            request.timeout().unwrap_or(TIMEOUT_READ_DEFAULT),
+            timeout_override
+                .or_else(|| request.timeout())
+                .unwrap_or(TIMEOUT_READ_DEFAULT),
             TIMEOUT_READ_DEFAULT,
         );
 

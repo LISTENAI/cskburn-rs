@@ -15,7 +15,7 @@ const SYNC_STUB: [u8; 36] = [
 const TIMEOUT_MEMORY_DATA: Duration = Duration::from_millis(500);
 const TIMEOUT_FLASH_DATA: Duration = Duration::from_secs(1);
 const TIMEOUT_FLASH_END: Duration = Duration::from_secs(2);
-const TIMEOUT_FLASH_ERASE_PER_MB: Duration = Duration::from_secs(10);
+pub(crate) const TIMEOUT_FLASH_ERASE_PER_MB: Duration = Duration::from_secs(10);
 const TIMEOUT_FLASH_MD5SUM_PER_MB: Duration = Duration::from_secs(1);
 
 #[binrw]
@@ -52,7 +52,7 @@ pub enum MemoryAction {
 
 #[binread]
 #[br(little)]
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct FlashInfo {
     // id[2] is the JEDEC capacity byte (log2 of size). Reject obvious
     // junk (all-zero, all-FF) and out-of-range capacities, so size() is
@@ -90,7 +90,7 @@ impl TryFrom<ResponseEnvelope> for FlashInfo {
 
 #[binread]
 #[br(little)]
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct ChipId([u8; 8]);
 
 impl fmt::Display for ChipId {
