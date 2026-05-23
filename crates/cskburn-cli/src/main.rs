@@ -1,14 +1,13 @@
-use std::{borrow::Cow, fmt::Display, str::FromStr, time::Duration};
+use std::{borrow::Cow, fmt::Display, process::ExitCode, str::FromStr, time::Duration};
 
 mod md5;
 mod types;
 
-use anyhow::{Result, anyhow};
 use clap::{Args, Parser, Subcommand};
 use console::Style;
 use cskburn::{
-    CSKBurn, ChipId, EraseTarget, Family, Image, ProbeTarget, Region, ResetStrategy, WriteTarget,
-    list_ports,
+    CSKBurn, ChipId, EraseTarget, Error, Family, Image, ProbeTarget, Region, ResetStrategy, Result,
+    WriteTarget, list_ports,
 };
 use dialoguer::Select;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -133,31 +132,58 @@ struct VerifyArgs {
     regions: Vec<RegionSpec>,
 }
 
-fn main() -> Result<()> {
+fn main() -> ExitCode {
     env_logger::init();
-
-    // Parse command line arguments
 
     let cli = Cli::parse();
     trace!("{:?}", cli);
 
-    let path = cli.port.map(Ok).unwrap_or_else(|| choose_port())?;
+    match run(cli) {
+        Ok(()) => ExitCode::SUCCESS,
+        // 128 + SIGINT — standard convention for user-cancelled processes.
+        Err(Error::Cancelled) => ExitCode::from(130),
+        Err(e) => {
+            report_error(&e);
+            // The numeric ErrorCode goes on stderr (parseable as [E####]).
+            // Exit status stays a coarse 0/1/130 — POSIX only has 8 bits to
+            // play with anyway, so packing 4-digit codes in there would
+            // hash badly (3001 -> 185) and tell nobody anything useful.
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn report_error(e: &Error) {
+    let prefix = e
+        .code()
+        .map(|c| format!("[E{:04}]", c.as_u32()))
+        .unwrap_or_else(|| "[E????]".to_string());
+    eprintln!(
+        "{} {}: {}",
+        Style::new().red().bold().apply_to("ERROR"),
+        prefix,
+        e
+    );
+}
+
+fn run(cli: Cli) -> Result<()> {
+    let path = match cli.port {
+        Some(p) => p,
+        None => choose_port()?,
+    };
 
     let chip = Family::from_str(&cli.chip)
-        .map_err(|_| anyhow!("Unsupported chip family: {}", cli.chip))?;
+        .map_err(|_| Error::ArgInvalid(format!("unsupported chip family: {}", cli.chip)))?;
 
-    let mut burner = cli.burner.map_or_else(
-        || Ok(chip.burner()),
-        |path| {
-            Image::try_from_file(0, &path)
-                .map_err(|e| anyhow!("Failed to open burner image file: {}", e))
-        },
-    )?;
+    let mut burner = match cli.burner.as_deref() {
+        None => chip.burner(),
+        Some(p) => Image::try_from_file(0, p).map_err(|e| Error::FileReadFailed {
+            path: p.to_string(),
+            source: e,
+        })?,
+    };
 
-    // Create and open the device
-
-    let mut cskburn = CSKBurn::connect(&path, cli.baud, chip)
-        .map_err(|e| anyhow!("Failed to open device: {}", e))?;
+    let mut cskburn = CSKBurn::connect(&path, cli.baud, chip)?;
 
     // Probe the device
 
@@ -174,7 +200,7 @@ fn main() -> Result<()> {
     // wiring as the one that succeeded.
     let mut effective_strategy = candidates[0];
 
-    let mut success = false;
+    let mut last_err: Option<Error> = None;
     for attempt in 0..cli.reset_attempts {
         let strategy = candidates[attempt % candidates.len()];
         effective_strategy = strategy;
@@ -188,60 +214,86 @@ fn main() -> Result<()> {
             ));
         }
 
-        cskburn
-            .reset(Some(strategy), true, Some(reset_interval))
-            .map_err(|e| anyhow!("Failed to reset device: {}", e))?;
+        cskburn.reset(Some(strategy), true, Some(reset_interval))?;
 
         match cskburn.probe(ProbeTarget::ROM, Some(cli.sync_attempts)) {
             Ok(()) => {
-                success = true;
+                last_err = None;
                 break;
             }
             Err(e) if !e.is_retryable() => {
                 progress.finish_and_clear();
-                return Err(anyhow!("Failed to detect device: {}", e));
+                return Err(e);
             }
-            Err(_) => continue,
+            Err(e) => {
+                last_err = Some(e);
+                continue;
+            }
         }
     }
 
     progress.finish_and_clear();
-    if !success {
-        return Err(anyhow!("Failed to detect device after multiple attempts"));
+    if let Some(e) = last_err {
+        // After exhausting retries, surface the last underlying failure so
+        // the user sees the root cause (typically 4001 PROBE_NO_SYNC).
+        return Err(e);
     }
 
-    // Enter burner mode
+    // Enter burner mode — write the burner image to RAM. RAM-write failures
+    // here are presented to the user as "burner load failed" (5003), wrapping
+    // the underlying 7005.
 
-    let burner_size = burner
-        .size()
-        .map_err(|e| anyhow!("Failed to get burner size: {}", e))?;
+    let burner_size = burner.size().map_err(|e| Error::FileReadFailed {
+        path: cli
+            .burner
+            .as_deref()
+            .unwrap_or("<built-in burner>")
+            .to_string(),
+        source: e,
+    })?;
 
     let progress = print_progress("Entering", burner_size, cli.no_progress);
 
-    for step in cskburn
-        .write_iter(&mut burner, WriteTarget::Memory { action: None })
-        .map_err(|e| anyhow!("Failed to write burner image: {}", e))?
-    {
-        let step = step.map_err(|e| anyhow!("Failed to write burner image: {}", e))?;
-        progress.set_position(step.bytes_written as u64);
+    let mut load_err: Option<Error> = None;
+    'load: {
+        let iter = match cskburn.write_iter(&mut burner, WriteTarget::Memory { action: None }) {
+            Ok(it) => it,
+            Err(e) => {
+                load_err = Some(e);
+                break 'load;
+            }
+        };
+        for step in iter {
+            match step {
+                Ok(s) => progress.set_position(s.bytes_written as u64),
+                Err(e) => {
+                    load_err = Some(e);
+                    break 'load;
+                }
+            }
+        }
+    }
+    if let Some(e) = load_err {
+        progress.finish_and_clear();
+        // RAM-write failures during burner load are user-facing 5003
+        // (BurnerLoadFailed) with the underlying 7005 in the source chain.
+        // Cancellation passes through unchanged.
+        return Err(match e {
+            Error::Cancelled => Error::Cancelled,
+            other => Error::BurnerLoadFailed(Box::new(other)),
+        });
     }
 
-    cskburn
-        .probe(ProbeTarget::Burner, Some(cli.sync_attempts))
-        .map_err(|e| anyhow!("Failed entering burner mode: {}", e))?;
+    cskburn.probe(ProbeTarget::Burner, Some(cli.sync_attempts))?;
 
     progress.finish_and_clear();
 
     // Read chip and flash info
 
-    let chip_id = cskburn
-        .chip_id()
-        .map_err(|e| anyhow!("Failed to read chip ID: {}", e))?;
+    let chip_id = cskburn.chip_id()?;
     print_line("chip-id", format_chip_id(&chip_id, chip));
 
-    let flash_id = cskburn
-        .flash_info()
-        .map_err(|e| anyhow!("Failed to read flash ID: {}", e))?;
+    let flash_id = cskburn.flash_info()?;
     let flash_size = flash_id.size() as u64;
     print_line(
         "flash-id",
@@ -253,9 +305,7 @@ fn main() -> Result<()> {
     match cli.command {
         Commands::Write(args) => {
             if args.erase_all {
-                cskburn
-                    .flash_erase(EraseTarget::Entire)
-                    .map_err(|e| anyhow!("Failed to erase flash: {}", e))?;
+                cskburn.flash_erase(EraseTarget::Entire)?;
             }
 
             type Md5Fn = Box<dyn Fn() -> Result<[u8; 16]>>;
@@ -276,24 +326,28 @@ fn main() -> Result<()> {
                             });
 
                             let source = hex_image.into();
-                            let region = Region::try_from(&source)
-                                .map_err(|e| anyhow!("Failed to create region: {}", e))?;
+                            let region = make_region(&source)?;
 
                             images.push((label, source, region, md5_fn));
                         }
                     }
-                    FileSpec::Raw { .. } => {
+                    FileSpec::Raw { path, .. } => {
                         let label = format!("{}", spec);
 
-                        let source = Image::try_from(spec.clone())
-                            .map_err(|e| anyhow!("Failed to open file: {}", e))?;
-                        let region = Region::try_from(&source)
-                            .map_err(|e| anyhow!("Failed to create region: {}", e))?;
+                        let source =
+                            Image::try_from(spec.clone()).map_err(|e| Error::FileReadFailed {
+                                path: path.to_string(),
+                                source: e,
+                            })?;
+                        let region = make_region(&source)?;
 
-                        let spec = spec.clone();
+                        let spec_for_md5 = spec.clone();
+                        let path_for_md5 = path.to_string();
                         let md5_fn: Md5Fn = Box::new(move || {
-                            spec.md5()
-                                .map_err(|e| anyhow!("Failed to calculate file MD5: {}", e))
+                            spec_for_md5.md5().map_err(|e| Error::VerifyLocalMd5Failed {
+                                path: path_for_md5.clone(),
+                                source: e,
+                            })
                         });
 
                         images.push((label, source, region, md5_fn));
@@ -302,13 +356,9 @@ fn main() -> Result<()> {
             }
 
             for (i, (_, _, region, _)) in images.iter().enumerate() {
-                validate_aligned(region.addr, FLASH_ALIGN, &format!("partition {}", i + 1))?;
-                validate_bounds(
-                    region.addr,
-                    region.size,
-                    flash_size,
-                    &format!("partition {}", i + 1),
-                )?;
+                let label = format!("partition {}", i + 1);
+                validate_aligned(region.addr, FLASH_ALIGN, &label)?;
+                validate_bounds(region.addr, region.size, flash_size, &label)?;
             }
 
             let count = images.len();
@@ -318,9 +368,7 @@ fn main() -> Result<()> {
                 if !chip.protocol().burner_supports_progressive_erase() {
                     let progress = print_spinner("Erasing", cli.no_progress);
 
-                    cskburn
-                        .flash_erase(EraseTarget::Region(region.clone()))
-                        .map_err(|e| anyhow!("Failed to erase flash region: {}", e))?;
+                    cskburn.flash_erase(EraseTarget::Region(region.clone()))?;
 
                     progress.finish_and_clear();
 
@@ -329,11 +377,8 @@ fn main() -> Result<()> {
 
                 let progress = print_progress("Writing", region.size as usize, cli.no_progress);
 
-                for step in cskburn
-                    .write_iter(&mut source, WriteTarget::Flash)
-                    .map_err(|e| anyhow!("Failed to write file: {}", e))?
-                {
-                    let step = step.map_err(|e| anyhow!("Failed to write file: {}", e))?;
+                for step in cskburn.write_iter(&mut source, WriteTarget::Flash)? {
+                    let step = step?;
                     progress.set_position(step.bytes_written as u64);
                 }
 
@@ -351,26 +396,20 @@ fn main() -> Result<()> {
                 if args.verify_all {
                     let progress = print_spinner("Verifying", cli.no_progress);
 
-                    let expect_md5 = Md5(md5_fn()?);
-                    let actual_md5 = Md5(cskburn
-                        .flash_verify(region)
-                        .map_err(|e| anyhow!("Failed to verify file: {}", e))?);
+                    let expected = md5_fn()?;
+                    let actual = cskburn.flash_verify(region)?;
 
-                    debug!("expect: {:02x?}", expect_md5);
-                    debug!("actual: {:02x?}", actual_md5);
+                    debug!("expect: {:02x?}", Md5(expected));
+                    debug!("actual: {:02x?}", Md5(actual));
 
-                    if expect_md5 != actual_md5 {
+                    if expected != actual {
                         progress.finish_and_clear();
-                        return Err(anyhow!(
-                            "File verification failed: expected {:02x?}, got {:02x?}",
-                            expect_md5,
-                            actual_md5
-                        ));
+                        return Err(Error::VerifyMismatch { expected, actual });
                     }
 
                     progress.finish_and_clear();
 
-                    print_step("Verified", format!("{}", actual_md5));
+                    print_step("Verified", format!("{}", Md5(actual)));
                 }
             }
 
@@ -379,20 +418,16 @@ fn main() -> Result<()> {
         Commands::Erase(args) => {
             for spec in &args.regions {
                 let region: Region = spec.clone().into();
-                validate_aligned(region.addr, FLASH_ALIGN, "erase address")?;
-                validate_aligned(region.size, FLASH_ALIGN, "erase size")?;
+                validate_aligned(region.addr, FLASH_ALIGN, "erase region")?;
+                validate_aligned(region.size, FLASH_ALIGN, "erase region size")?;
                 validate_bounds(region.addr, region.size, flash_size, "erase region")?;
             }
 
             for spec in args.regions {
-                cskburn
-                    .flash_erase(EraseTarget::Region(spec.into()))
-                    .map_err(|e| anyhow!("Failed to erase flash region: {}", e))?;
+                cskburn.flash_erase(EraseTarget::Region(spec.into()))?;
             }
         }
-        Commands::EraseAll => cskburn
-            .flash_erase(EraseTarget::Entire)
-            .map_err(|e| anyhow!("Failed to erase flash: {}", e))?,
+        Commands::EraseAll => cskburn.flash_erase(EraseTarget::Entire)?,
         Commands::Verify(args) => {
             for spec in &args.regions {
                 let region: Region = spec.clone().into();
@@ -400,9 +435,7 @@ fn main() -> Result<()> {
             }
 
             for spec in args.regions {
-                let md5 = cskburn
-                    .flash_verify(spec.into())
-                    .map_err(|e| anyhow!("Failed to verify flash region: {}", e))?;
+                let md5 = cskburn.flash_verify(spec.into())?;
                 println!("{:02x?}", md5);
             }
         }
@@ -410,19 +443,25 @@ fn main() -> Result<()> {
 
     // Reset the device to exit burner mode
 
-    cskburn
-        .reset(Some(effective_strategy), false, Some(reset_interval))
-        .map_err(|e| anyhow!("Failed to reset device: {}", e))?;
+    cskburn.reset(Some(effective_strategy), false, Some(reset_interval))?;
 
     Ok(())
 }
 
+fn make_region(image: &Image) -> Result<Region> {
+    Region::try_from(image).map_err(|e| Error::FileReadFailed {
+        path: "<image>".to_string(),
+        source: e,
+    })
+}
+
 fn choose_port() -> Result<String> {
-    let ports: Vec<String> =
-        list_ports().map_err(|e| anyhow!("Failed to list serial ports: {}", e))?;
+    let ports: Vec<String> = list_ports()?;
 
     if ports.is_empty() {
-        return Err(anyhow!("No serial ports found"));
+        return Err(Error::SerialNotFound(
+            "no USB serial ports found; pass --port explicitly".to_string(),
+        ));
     }
 
     let choice = Select::new()
@@ -430,7 +469,7 @@ fn choose_port() -> Result<String> {
         .default(0)
         .items(&ports)
         .interact()
-        .map_err(|e| anyhow!("Failed to get port choice: {}", e))?;
+        .map_err(|e| Error::ArgInvalid(format!("failed to read port choice: {}", e)))?;
 
     Ok(ports[choice].clone())
 }
@@ -486,32 +525,23 @@ where
 
 fn validate_aligned(value: u32, align: u32, label: &str) -> Result<()> {
     if value % align != 0 {
-        return Err(anyhow!(
-            "Address 0x{:08x} of {} should be {} aligned",
-            value,
-            label,
-            format_size(align as u64),
-        ));
+        return Err(Error::ArgAddrUnaligned {
+            addr: value,
+            align,
+            label: label.to_string(),
+        });
     }
     Ok(())
 }
 
 fn validate_bounds(addr: u32, size: u32, flash_size: u64, label: &str) -> Result<()> {
-    if (addr as u64) >= flash_size {
-        return Err(anyhow!(
-            "Start address 0x{:08x} of {} exceeds flash capacity ({} MiB)",
+    if (addr as u64) >= flash_size || (addr as u64) + (size as u64) > flash_size {
+        return Err(Error::ArgAddrOutOfBounds {
             addr,
-            label,
-            flash_size / 1024 / 1024,
-        ));
-    }
-    if (addr as u64) + (size as u64) > flash_size {
-        return Err(anyhow!(
-            "End address 0x{:08x} of {} exceeds flash capacity ({} MiB)",
-            addr + size,
-            label,
-            flash_size / 1024 / 1024,
-        ));
+            size,
+            capacity_mib: flash_size / 1024 / 1024,
+            label: label.to_string(),
+        });
     }
     Ok(())
 }
@@ -522,7 +552,7 @@ enum ResetStrategyArg {
     Fixed(ResetStrategy),
 }
 
-fn parse_reset_strategy_arg(s: &str) -> Result<ResetStrategyArg, String> {
+fn parse_reset_strategy_arg(s: &str) -> std::result::Result<ResetStrategyArg, String> {
     if s == "auto" {
         return Ok(ResetStrategyArg::Auto);
     }
@@ -538,15 +568,5 @@ fn format_chip_id(chip_id: &ChipId, family: Family) -> String {
     match family {
         Family::ARCS => format!("{:x}", chip_id),
         _ => format!("{:X}", chip_id),
-    }
-}
-
-fn format_size(bytes: u64) -> String {
-    if bytes >= 1024 * 1024 {
-        format!("{}M", bytes / 1024 / 1024)
-    } else if bytes >= 1024 {
-        format!("{}K", bytes / 1024)
-    } else {
-        format!("{}B", bytes)
     }
 }
