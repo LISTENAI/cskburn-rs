@@ -164,12 +164,16 @@ fn main() -> Result<()> {
             .reset(true, Some(reset_interval))
             .map_err(|e| anyhow!("Failed to reset device: {}", e))?;
 
-        if cskburn
-            .probe(ProbeTarget::ROM, Some(cli.sync_attempts))
-            .is_ok()
-        {
-            success = true;
-            break;
+        match cskburn.probe(ProbeTarget::ROM, Some(cli.sync_attempts)) {
+            Ok(()) => {
+                success = true;
+                break;
+            }
+            Err(e) if !e.is_retryable() => {
+                progress.finish_and_clear();
+                return Err(anyhow!("Failed to detect device: {}", e));
+            }
+            Err(_) => continue,
         }
     }
 

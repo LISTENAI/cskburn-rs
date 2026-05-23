@@ -156,7 +156,13 @@ impl CSKBurn {
                 from: BAUD_RATE_DEFAULT,
             })?;
             self.port.clear(ClearBuffer::All)?;
-            self.port.set_baud_rate(self.baud)?;
+            // ROM accepted the new baud, but the host driver may still refuse
+            // it (e.g. macOS WCH driver rejects non-standard rates). That is
+            // deterministic, not worth retrying — surface it distinctly so the
+            // caller can bail instead of looping through reset attempts.
+            self.port
+                .set_baud_rate(self.baud)
+                .map_err(|_| Error::BaudRateUnsupported(self.baud))?;
 
             self.sync(attempts)?;
         }

@@ -13,6 +13,8 @@ pub enum Error {
     Io(#[from] io::Error),
     #[error("operation cancelled")]
     Cancelled,
+    #[error("host does not support baud rate {0} bps")]
+    BaudRateUnsupported(u32),
     #[error("{0}")]
     Hex(String),
 }
@@ -24,6 +26,12 @@ impl Error {
             Error::SerialPort(e) => e.kind() == serialport::ErrorKind::Io(io::ErrorKind::TimedOut),
             _ => false,
         }
+    }
+
+    /// Whether retrying the operation could plausibly succeed. Deterministic
+    /// failures (e.g. host driver rejecting a baud rate) should not be retried.
+    pub fn is_retryable(&self) -> bool {
+        !matches!(self, Error::BaudRateUnsupported(_) | Error::Cancelled)
     }
 }
 
