@@ -14,7 +14,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, trace};
 
 use crate::md5::Md5;
-use crate::types::{FileSpec, RegionSpec};
+use crate::types::{RegionToken, WriteEntry, parse_write_entries};
 
 const DEFAULT_RESET_ATTEMPTS: usize = 5;
 const DEFAULT_SYNC_ATTEMPTS: usize = 3;
@@ -80,26 +80,27 @@ enum Commands {
     /// Write files to flash
     Write(WriteArgs),
 
-    /// Erase specific regions of flash
+    /// Erase regions of flash, or the whole chip via `erase chip`
     Erase(EraseArgs),
 
-    /// Erase entire flash
-    EraseAll,
-
-    /// Verify specific regions of flash
+    /// Read MD5 from regions of flash, or the whole chip via `verify chip`
     Verify(VerifyArgs),
 }
 
 #[derive(Args, Debug)]
 struct WriteArgs {
-    /// Files to write, in the format ADDR:FILE
+    /// Files to write.
     ///
-    /// ADDR - The offset to write the file to. Accepts hex (`0x100000`),
-    ///        decimal (`1048576`), or decimal with a 1024-based unit suffix
-    ///        (`1M`, `4K`, `1G`). Underscores allowed as separators.
-    /// FILE - The path to the file to write.
-    #[arg(value_name = "ADDR:FILE", required = true, verbatim_doc_comment)]
-    files: Vec<FileSpec>,
+    /// Either alternating `<addr> <file>` pairs for raw binaries, e.g.
+    ///   cskburn ... write 0x0 app.bin 0x100000 res.bin
+    /// or a list of `.hex` files (each carries its own addresses):
+    ///   cskburn ... write app.hex
+    ///
+    /// Address formats: hex (`0x100000`), decimal (`1048576`), or decimal
+    /// with a 1024-based unit suffix (`1M`, `4K`, `1G`). Underscores allowed
+    /// as separators.
+    #[arg(value_name = "FILES", required = true, verbatim_doc_comment)]
+    files: Vec<String>,
 
     /// Erase the entire flash chip before writing.
     #[arg(long)]
@@ -112,24 +113,28 @@ struct WriteArgs {
 
 #[derive(Args, Debug)]
 struct EraseArgs {
-    /// Regions to erase, in the format ADDR:SIZE
+    /// Regions to erase: either `chip` for the whole flash, or one or more
+    /// `<addr>+<size>` ranges, e.g.
+    ///   cskburn ... erase 0x0+4K 0x100000+1M
     ///
-    /// ADDR and SIZE accept hex (`0x100000`), decimal (`1048576`), or decimal
-    /// with a 1024-based unit suffix (`1M`, `4K`, `1G`). Underscores allowed
-    /// as separators.
-    #[arg(value_name = "ADDR:SIZE", required = true, verbatim_doc_comment)]
-    regions: Vec<RegionSpec>,
+    /// Address and size formats: hex (`0x100000`), decimal (`1048576`), or
+    /// decimal with a 1024-based unit suffix (`1M`, `4K`, `1G`). Underscores
+    /// allowed as separators.
+    #[arg(value_name = "REGIONS", required = true, verbatim_doc_comment)]
+    regions: Vec<RegionToken>,
 }
 
 #[derive(Args, Debug)]
 struct VerifyArgs {
-    /// Regions to verify, in the format ADDR:SIZE
+    /// Regions to read MD5 from: either `chip` for the whole flash, or one or
+    /// more `<addr>+<size>` ranges, e.g.
+    ///   cskburn ... verify 0x0+4K 0x100000+1M
     ///
-    /// ADDR and SIZE accept hex (`0x100000`), decimal (`1048576`), or decimal
-    /// with a 1024-based unit suffix (`1M`, `4K`, `1G`). Underscores allowed
-    /// as separators.
-    #[arg(value_name = "ADDR:SIZE", required = true, verbatim_doc_comment)]
-    regions: Vec<RegionSpec>,
+    /// Address and size formats: hex (`0x100000`), decimal (`1048576`), or
+    /// decimal with a 1024-based unit suffix (`1M`, `4K`, `1G`). Underscores
+    /// allowed as separators.
+    #[arg(value_name = "REGIONS", required = true, verbatim_doc_comment)]
+    regions: Vec<RegionToken>,
 }
 
 fn main() -> ExitCode {
@@ -307,18 +312,27 @@ fn run(cli: Cli) -> Result<()> {
             if args.erase_chip {
                 cskburn.flash_erase(EraseTarget::Entire)?;
             }
+            // After a chip erase everything is already 0xFF, so the per-region
+            // erase loop below is unnecessary. Otherwise, some burners (ARCS,
+            // VenusA) can't accept writes to dirty pages and need per-region
+            // erase regardless.
+            let do_region_erase =
+                !args.erase_chip && !chip.protocol().burner_supports_progressive_erase();
+
+            let entries = parse_write_entries(&args.files).map_err(Error::ArgInvalid)?;
 
             type Md5Fn = Box<dyn Fn() -> Result<[u8; 16]>>;
 
-            // Resolve all file specs into (label, image, region, md5_fn) tuples.
+            // Resolve write entries into (label, image, region, md5_fn) tuples.
             // A single HEX file may produce multiple images.
             let mut images: Vec<(String, Image, Region, Md5Fn)> = Vec::new();
 
-            for spec in &args.files {
-                match spec {
-                    FileSpec::Hex { path } => {
-                        for hex_image in cskburn::hex::parse_hex(path, chip.base_addr())? {
-                            let label = format!("{}@0x{:08x}", path, hex_image.addr);
+            for entry in &entries {
+                match entry {
+                    WriteEntry::Hex { path } => {
+                        let path_str = path.to_string_lossy().to_string();
+                        for hex_image in cskburn::hex::parse_hex(&path_str, chip.base_addr())? {
+                            let label = format!("{}@0x{:08x}", path_str, hex_image.addr);
 
                             let md5_fn: Md5Fn = Box::new({
                                 let md5 = ::md5::compute(&hex_image.data).0;
@@ -331,23 +345,24 @@ fn run(cli: Cli) -> Result<()> {
                             images.push((label, source, region, md5_fn));
                         }
                     }
-                    FileSpec::Raw { path, .. } => {
-                        let label = format!("{}", spec);
+                    WriteEntry::Raw { path, .. } => {
+                        let label = format!("{}", entry);
 
-                        let source =
-                            Image::try_from(spec.clone()).map_err(|e| Error::FileReadFailed {
-                                path: path.to_string(),
-                                source: e,
-                            })?;
+                        let source = Image::try_from(entry).map_err(|e| Error::FileReadFailed {
+                            path: path.to_string_lossy().to_string(),
+                            source: e,
+                        })?;
                         let region = make_region(&source)?;
 
-                        let spec_for_md5 = spec.clone();
-                        let path_for_md5 = path.to_string();
+                        let entry_for_md5 = entry.clone();
+                        let path_for_md5 = path.to_string_lossy().to_string();
                         let md5_fn: Md5Fn = Box::new(move || {
-                            spec_for_md5.md5().map_err(|e| Error::VerifyLocalMd5Failed {
-                                path: path_for_md5.clone(),
-                                source: e,
-                            })
+                            entry_for_md5
+                                .md5()
+                                .map_err(|e| Error::VerifyLocalMd5Failed {
+                                    path: path_for_md5.clone(),
+                                    source: e,
+                                })
                         });
 
                         images.push((label, source, region, md5_fn));
@@ -365,7 +380,7 @@ fn run(cli: Cli) -> Result<()> {
             for (i, (label, mut source, region, md5_fn)) in images.into_iter().enumerate() {
                 print_line(format!("{}/{}", i + 1, count), label);
 
-                if !chip.protocol().burner_supports_progressive_erase() {
+                if do_region_erase {
                     let progress = print_spinner("Erasing", cli.no_progress);
 
                     cskburn.flash_erase(EraseTarget::Region(region.clone()))?;
@@ -416,26 +431,38 @@ fn run(cli: Cli) -> Result<()> {
             print_step("Done", "".to_string());
         }
         Commands::Erase(args) => {
-            for spec in &args.regions {
-                let region: Region = spec.clone().into();
-                validate_aligned(region.addr, FLASH_ALIGN, "erase region")?;
-                validate_aligned(region.size, FLASH_ALIGN, "erase region size")?;
-                validate_bounds(region.addr, region.size, flash_size, "erase region")?;
+            for token in &args.regions {
+                if let RegionToken::Range { addr, size } = token {
+                    validate_aligned(*addr, FLASH_ALIGN, "erase region")?;
+                    validate_aligned(*size, FLASH_ALIGN, "erase region size")?;
+                    validate_bounds(*addr, *size, flash_size, "erase region")?;
+                }
             }
 
-            for spec in args.regions {
-                cskburn.flash_erase(EraseTarget::Region(spec.into()))?;
+            for token in args.regions {
+                let target = match token {
+                    RegionToken::Chip => EraseTarget::Entire,
+                    RegionToken::Range { addr, size } => EraseTarget::Region(Region { addr, size }),
+                };
+                cskburn.flash_erase(target)?;
             }
         }
-        Commands::EraseAll => cskburn.flash_erase(EraseTarget::Entire)?,
         Commands::Verify(args) => {
-            for spec in &args.regions {
-                let region: Region = spec.clone().into();
-                validate_bounds(region.addr, region.size, flash_size, "verify region")?;
+            for token in &args.regions {
+                if let RegionToken::Range { addr, size } = token {
+                    validate_bounds(*addr, *size, flash_size, "verify region")?;
+                }
             }
 
-            for spec in args.regions {
-                let md5 = cskburn.flash_verify(spec.into())?;
+            for token in args.regions {
+                let region = match token {
+                    RegionToken::Chip => Region {
+                        addr: 0,
+                        size: flash_size as u32,
+                    },
+                    RegionToken::Range { addr, size } => Region { addr, size },
+                };
+                let md5 = cskburn.flash_verify(region)?;
                 println!("{:02x?}", md5);
             }
         }
