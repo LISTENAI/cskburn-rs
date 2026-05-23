@@ -101,13 +101,13 @@ struct WriteArgs {
     #[arg(value_name = "ADDR:FILE", required = true, verbatim_doc_comment)]
     files: Vec<FileSpec>,
 
-    /// Erase entire flash before writing
+    /// Erase the entire flash chip before writing.
     #[arg(long)]
-    erase_all: bool,
+    erase_chip: bool,
 
-    /// Verify all wrote regions after writing
+    /// Skip the post-write MD5 verification step.
     #[arg(long)]
-    verify_all: bool,
+    skip_verify: bool,
 }
 
 #[derive(Args, Debug)]
@@ -304,7 +304,7 @@ fn run(cli: Cli) -> Result<()> {
 
     match cli.command {
         Commands::Write(args) => {
-            if args.erase_all {
+            if args.erase_chip {
                 cskburn.flash_erase(EraseTarget::Entire)?;
             }
 
@@ -393,7 +393,7 @@ fn run(cli: Cli) -> Result<()> {
                     ),
                 );
 
-                if args.verify_all {
+                if !args.skip_verify {
                     let progress = print_spinner("Verifying", cli.no_progress);
 
                     let expected = md5_fn()?;
