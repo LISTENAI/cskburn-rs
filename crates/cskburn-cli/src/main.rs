@@ -33,7 +33,7 @@ struct Cli {
     #[arg(short, long, default_value = "1500000")]
     baud: u32,
 
-    /// Chip family [possible values: venus, mars, arcs]
+    /// Chip family [possible values: venus, mars, arcs, venusa]
     #[arg(short = 'C', long)]
     chip: String,
 

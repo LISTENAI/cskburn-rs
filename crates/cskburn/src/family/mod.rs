@@ -6,10 +6,13 @@ use serialport::SerialPort;
 mod arcs;
 mod mars;
 mod venus;
+mod venusa;
 
 use crate::{
     Image,
-    family::{arcs::ArcsProtocol, mars::MarsProtocol, venus::VenusProtocol},
+    family::{
+        arcs::ArcsProtocol, mars::MarsProtocol, venus::VenusProtocol, venusa::VenusaProtocol,
+    },
 };
 
 pub trait ChipProtocol {
@@ -55,6 +58,7 @@ pub enum Family {
     VENUS,
     MARS,
     ARCS,
+    VENUSA,
 }
 
 impl Family {
@@ -72,6 +76,10 @@ impl Family {
                 0x2004_0000,
                 Box::new(Cursor::new(include_bytes!("../burners/burner_arcs.bin"))),
             ),
+            Family::VENUSA => Image::new(
+                0x2005_0000,
+                Box::new(Cursor::new(include_bytes!("../burners/burner_venusa.bin"))),
+            ),
         }
     }
 
@@ -80,6 +88,7 @@ impl Family {
             Family::VENUS => 0x1800_0000,
             Family::MARS => 0x1800_0000,
             Family::ARCS => 0x3000_0000,
+            Family::VENUSA => 0x0300_0000,
         }
     }
 
@@ -88,6 +97,7 @@ impl Family {
             Family::VENUS => Box::new(VenusProtocol),
             Family::MARS => Box::new(MarsProtocol),
             Family::ARCS => Box::new(ArcsProtocol),
+            Family::VENUSA => Box::new(VenusaProtocol),
         }
     }
 }
@@ -103,6 +113,8 @@ impl FromStr for Family {
             x if x.starts_with("csk5") => Ok(Family::MARS),
             "arcs" => Ok(Family::ARCS),
             x if x.starts_with("ls26") => Ok(Family::ARCS),
+            "venusa" | "7" => Ok(Family::VENUSA),
+            x if x.starts_with("csk7") => Ok(Family::VENUSA),
             _ => Err("Unsupported chip family"),
         }
     }
