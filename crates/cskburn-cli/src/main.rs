@@ -37,7 +37,8 @@ struct Cli {
     #[arg(short = 'C', long)]
     chip: String,
 
-    /// Path to burner image to use, omit to use built-in
+    /// Path to a burner image to use; omit to use the built-in
+    #[arg(long)]
     burner: Option<String>,
 
     /// Number of reset attempts during device probing
