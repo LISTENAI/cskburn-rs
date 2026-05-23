@@ -1,0 +1,10 @@
+#!/bin/sh
+# Reject commits whose staged Rust files aren't `cargo fmt` clean.
+# Enable per-clone with: git config core.hooksPath .githooks
+
+if ! cargo fmt --check; then
+    echo
+    echo "cargo fmt would reformat the above. Run \`cargo fmt\` and stage" >&2
+    echo "the result, then retry the commit." >&2
+    exit 1
+fi
